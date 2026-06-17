@@ -1,0 +1,17 @@
+# Netlify deploy config for the Shift Dashboard (static PWA, no backend).
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Single-page app: serve index.html for any unknown path (future-proofing — the
+# app currently uses tab state, not routes, but this avoids 404s on deep links).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Always revalidate the service worker so app updates reach the phone promptly.
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
