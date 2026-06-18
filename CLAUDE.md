@@ -9,14 +9,17 @@ A local-first personal dashboard for a bar worker to track shifts, tips, and ear
 - **papaparse** (CSV import/export), **date-fns** (dates), **date-holidays** (German public holidays), **Recharts** (charts, in deps — not yet wired up). Calendar is a **custom Monday-start month grid**, not FullCalendar.
 
 ## Status
-In progress — **Phases 1–5 substantially done** (47 passing tests). Done: data model, both importers, table + rich filtering, CSV export, earnings/stats, 5-type taxonomy + families, estimate engine + Planned/estimates tab, shift editor (post-shift entry / manual add / edit / delete), shift swap, calendar month view, vacation calculator (dual-basis: proportional "shifts you'd miss" + Werktage/24, taken/remaining counters). `date-holidays` is lazy-loaded (heavy) only on the Vacation tab.
+In progress — **Phases 1–5 + Tier 1 done** (47 passing tests). **Live at https://shift-dashboard.giampobo.workers.dev/** (Cloudflare Workers Static Assets — see [[deployment]]). Done: data model, both importers, table + rich filtering, CSV export, earnings/stats, 5-type taxonomy + families, estimate engine + Planned/estimates tab, shift editor (post-shift entry / manual add / edit / delete), shift swap, calendar month view, vacation calculator (dual-basis: proportional "shifts you'd miss" + Werktage/24, taken/remaining counters), **Settings panel** (editable rates/payslips/general), **PWA** (installable, offline), **dd.MM.yyyy date display**. `date-holidays` is lazy-loaded (heavy) only on the Vacation tab.
 
 ## ▶ Start here next (agreed roadmap)
-Tiered by value — **do Tier 1 first** (it's what makes the app actually usable day-to-day on a phone):
+Tiered by value. **Tier 1 (PWA + Settings + deploy) is DONE** — only the icon PNG is outstanding (user makes it himself → `public/icon-source.png` → `npm run generate-pwa-assets` → push).
 
-**Tier 1 — finish the original promise**
-1. **PWA install + offline** *(next up)* — add `vite-plugin-pwa` (manifest + service worker) so the app is installable on the phone and works offline for post-shift entry. This is the whole reason the stack is a PWA. Needs icons in `public/`, manifest, `theme-color` already set in `index.html`.
-2. **Settings panel** — make seeded financial data editable in-app: gross rates, the 4 payslips (→ net factor), `tipPoolRate`, `closingTime`, `vacationWerktage`. Currently all hardcoded in `db.ts`; a rate change or new payslip means editing code. Also lets the user override the ~16 proportional vacation budget if the employer states a fixed number (open §8 question).
+**Tier 1 — finish the original promise ✅ DONE**
+1. ~~**PWA install + offline**~~ — done via `vite-plugin-pwa` (manifest + SW, autoUpdate). Icon PNGs still placeholders.
+2. ~~**Settings panel**~~ — done: `src/components/Settings.tsx` + `src/lib/settingsStore.ts`, editable general/rates/payslips, Dexie-backed.
+3. ~~**Deploy**~~ — live on Cloudflare Workers (GitHub auto-deploy). See [[deployment]].
+
+**Tier 1.5 — next up: Google Drive appdata sync** ([[sync-approach]]) — cross-device sync so phone and PC share data (currently per-device IndexedDB).
 
 **Tier 2 — make the data talk**
 3. **Charts** (recharts already in deps) — tips/hour over time, tips by shift type, earnings by month, night-vs-day.
