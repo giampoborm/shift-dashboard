@@ -1,0 +1,4 @@
+# Cloudflare Pages custom headers. Always revalidate the service worker so app
+# updates reach the phone promptly (mirrors the /sw.js rule in netlify.toml).
+/sw.js
+  Cache-Control: public, max-age=0, must-revalidate
