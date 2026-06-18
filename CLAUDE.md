@@ -11,6 +11,12 @@ A local-first personal dashboard for a bar worker to track shifts, tips, and ear
 ## Status
 In progress — **Phases 1–5 + Tier 1 done** (47 passing tests). **Live at https://shift-dashboard.giampobo.workers.dev/** (Cloudflare Workers Static Assets — see [[deployment]]). Done: data model, both importers, table + rich filtering, CSV export, earnings/stats, 5-type taxonomy + families, estimate engine + Planned/estimates tab, shift editor (post-shift entry / manual add / edit / delete), shift swap, calendar month view, vacation calculator (dual-basis: proportional "shifts you'd miss" + Werktage/24, taken/remaining counters), **Settings panel** (editable rates/payslips/general), **PWA** (installable, offline), **dd.MM.yyyy date display**. `date-holidays` is lazy-loaded (heavy) only on the Vacation tab.
 
+## ⚠ This app is LIVE — push, don't just commit
+The dashboard is deployed and in **daily real use on the user's PC and phone**. Cloudflare Workers **auto-deploys from GitHub `main`** ([[deployment]]), and cross-device data sync runs through the user's own Google Drive ([[sync-approach]]). Consequences for how to work here:
+- **A change is not "done" until it's pushed.** A local commit is invisible to the user — the live site keeps serving the old build until `git push` reaches `main`. So the finish line for any code change is: `/verify` (green) → commit → **push**. Don't leave verified work merely committed.
+- This is durable authorization to push on this project (it overrides the global "push only when asked" default) — but only *after* verification passes. Never push a red build or half-finished work to a live, in-use app.
+- The OAuth **client ID is not a secret** (ships in JS, gated by authorized JS origins) — fine to commit. But `data/` (real financial CSVs) is gitignored and **never** committed/published.
+
 ## ▶ Start here next (agreed roadmap)
 Tiered by value. **Tier 1 (PWA + Settings + deploy) is DONE** — only the icon PNG is outstanding (user makes it himself → `public/icon-source.png` → `npm run generate-pwa-assets` → push).
 
@@ -19,7 +25,7 @@ Tiered by value. **Tier 1 (PWA + Settings + deploy) is DONE** — only the icon 
 2. ~~**Settings panel**~~ — done: `src/components/Settings.tsx` + `src/lib/settingsStore.ts`, editable general/rates/payslips, Dexie-backed.
 3. ~~**Deploy**~~ — live on Cloudflare Workers (GitHub auto-deploy). See [[deployment]].
 
-**Tier 1.5 — Google Drive appdata sync ✅ BUILT** ([[sync-approach]]) — cross-device sync via the user's own Drive `appdata` folder. Whole-file newer-wins + conflict guard; manual "Sync now" + silent pull/push on app open. `src/lib/dbSnapshot.ts` (pure: serialize/hash/`resolveSync`, tested) + `src/lib/driveSync.ts` (GIS token client + Drive REST, no backend → no refresh token) + `src/components/SyncPanel.tsx` (Settings section, in-app client-ID entry + conflict prompt). **Dormant until the user finishes the one-time Google Cloud OAuth setup** (create project, enable Drive API, consent screen in Testing + self as test user, scope `drive.appdata`, Web client with JS origins for the live URL + localhost), pastes the client ID into Settings, and clicks Connect.
+**Tier 1.5 — Google Drive appdata sync ✅ LIVE & WORKING on PC + phone (2026-06-18)** ([[sync-approach]]) — cross-device sync via the user's own Drive `appdata` folder. Whole-file newer-wins + conflict guard; manual "Sync now" + silent pull/push on app open. `src/lib/dbSnapshot.ts` (pure: serialize/hash/`resolveSync`, tested) + `src/lib/driveSync.ts` (GIS token client + Drive REST, no backend → no refresh token) + `src/components/SyncPanel.tsx` (Settings section, in-app client-ID entry + conflict prompt). The user created his Google OAuth client (consent screen in Testing + self as test user, scope `drive.appdata`, Web client with JS origins for the live URL + localhost), pasted the client ID into Settings, and connected both devices. Mobile gotcha: the GIS popup goes blank in the standalone PWA / with iOS cross-site-tracking blocking — Connect from a normal browser tab (robust fix if it recurs: switch GIS to full-page redirect, no backend needed).
 
 **Tier 2 — make the data talk**
 3. **Charts** (recharts already in deps) — tips/hour over time, tips by shift type, earnings by month, night-vs-day.
