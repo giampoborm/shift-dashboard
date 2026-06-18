@@ -1,5 +1,0 @@
-# SPA fallback for Cloudflare Pages: serve index.html for any unknown path so
-# deep links don't 404. (Cloudflare reads this file from the build output root;
-# it does not read netlify.toml.) The app uses tab state, not routes, but this
-# future-proofs deep links and matches the Netlify config we keep as a fallback.
-/*    /index.html   200
