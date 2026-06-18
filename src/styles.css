@@ -309,3 +309,19 @@ button.linklike {
   padding: 0 0.2rem; cursor: pointer; font-size: 0.82rem;
 }
 button.linklike:hover { color: var(--text); }
+
+/* Charts tab */
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 1rem;
+}
+.chart-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.8rem 0.8rem 0.4rem;
+}
+.chart-head { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.4rem; flex-wrap: wrap; }
+.chart-title { font-size: 0.86rem; font-weight: 600; }
+.chart-sub { font-size: 0.72rem; color: var(--muted); }

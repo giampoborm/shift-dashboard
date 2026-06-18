@@ -23,6 +23,8 @@ import type { GrossRate, Payslip, Settings, Shift, ShiftType } from "./lib/types
 const VacationPlanner = lazy(() =>
   import("./components/VacationPlanner").then((m) => ({ default: m.VacationPlanner })),
 );
+// Code-split: recharts is heavy — load it only when the Charts tab is opened.
+const Charts = lazy(() => import("./components/Charts").then((m) => ({ default: m.Charts })));
 
 const eur = (n: number) => `€${n.toFixed(2)}`;
 const eurRange = (r: Range) => `€${Math.round(r.p25)}–${Math.round(r.p75)}`;
@@ -30,7 +32,7 @@ const eurRange = (r: Range) => `€${Math.round(r.p25)}–${Math.round(r.p75)}`;
 const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SHIFT_TYPES: ShiftType[] = ["opening", "late-morning", "mid-day", "early-closing", "closing"];
 
-type Filter = "worked" | "planned" | "all" | "calendar" | "vacation" | "settings";
+type Filter = "worked" | "planned" | "all" | "calendar" | "charts" | "vacation" | "settings";
 type ImportKind = "history" | "plan";
 
 interface ColumnFilters {
@@ -195,9 +197,10 @@ export function App() {
 
   const isPlannedView = filter === "planned";
   const isCalendar = filter === "calendar";
+  const isCharts = filter === "charts";
   const isVacation = filter === "vacation";
   const isSettings = filter === "settings";
-  const isTool = isCalendar || isVacation || isSettings; // non-table full-width views
+  const isTool = isCalendar || isCharts || isVacation || isSettings; // non-table full-width views
   const estTotals =
     ready && isPlannedView && shifts.length
       ? sumEstimates(shifts, workedHistory, rates!, payslips!, settings!)
@@ -244,10 +247,10 @@ export function App() {
 
       {counts.all > 0 && (
         <div className="tabs">
-          {(["worked", "planned", "all", "calendar", "vacation"] as Filter[]).map((f) => (
+          {(["worked", "planned", "all", "calendar", "charts", "vacation"] as Filter[]).map((f) => (
             <button key={f} className={`tab ${filter === f ? "active" : ""}`} onClick={() => setFilter(f)}>
               {f[0].toUpperCase() + f.slice(1)}
-              {f !== "calendar" && f !== "vacation" && (
+              {f !== "calendar" && f !== "charts" && f !== "vacation" && (
                 <span className="muted"> ({counts[f as keyof typeof counts]})</span>
               )}
             </button>
@@ -317,6 +320,10 @@ export function App() {
           onSettingsSaved={setSettings}
           onDataReplaced={refreshSettings}
         />
+      ) : ready && isCharts ? (
+        <Suspense fallback={<div className="empty">Loading…</div>}>
+          <Charts worked={workedHistory} rates={rates!} payslips={payslips!} settings={settings!} />
+        </Suspense>
       ) : ready && isVacation ? (
         <Suspense fallback={<div className="empty">Loading…</div>}>
           <VacationPlanner worked={workedHistory} settings={settings!} />
