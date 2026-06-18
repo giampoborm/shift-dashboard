@@ -81,6 +81,15 @@ dom 29 18-00,"March 28, 2026",€39.00,5.5,€79.75`;
     expect(warnings.some((w) => w.message.includes("≠ date day"))).toBe(true);
   });
 
+  it("does NOT flag a row whose only number is the shift time (no day number)", () => {
+    const noDayNum = `Giorno settimana,Date,mancia,numero ore,stipendio nuovo
+sab 11-18,"June 13, 2026",€20.00,7,€108.50`;
+    const { shifts, warnings } = importHistoryCsv(noDayNum, rates, settings);
+    expect(shifts).toHaveLength(1);
+    expect(shifts[0].plannedStart).toBe("11:00"); // 11 is the slot start, not a day
+    expect(warnings.some((w) => w.message.includes("≠ date day"))).toBe(false);
+  });
+
   it("flags unparseable dates and skips them", () => {
     const bad = `Giorno settimana,Date,mancia,numero ore,stipendio nuovo
 junk,"not a date",€10.00,5,€72.50`;

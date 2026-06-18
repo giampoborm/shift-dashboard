@@ -56,19 +56,28 @@ export function parseMoney(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// A "start-end" time range like "11-18", "18-01:40", "18-Ende". Shared by the
+// slot extractor and the day-number guard so they agree on what a time looks like.
+// (No `g` flag: replace/match operate on the first range only.)
+const TIME_RANGE =
+  /(\d{1,2}(?::\d{2})?(?:\.\d+)?)\s*-\s*(\d{1,2}(?::\d{2})?(?:\.\d+)?|[Ee]nde)/;
+
 /** Extract a "start-end" time slot from a free-text cell, or "" if none found. */
 export function extractTimeSlot(cell: string): string {
   const norm = cell.replace(/[‒–—―−]/g, "-");
-  // a time token: 1-2 digits, optional :mm or .d, then "-", then another token or "Ende"
-  const m = norm.match(
-    /(\d{1,2}(?::\d{2})?(?:\.\d+)?)\s*-\s*(\d{1,2}(?::\d{2})?(?:\.\d+)?|[Ee]nde)/,
-  );
+  const m = norm.match(TIME_RANGE);
   return m ? `${m[1]}-${m[2]}` : "";
 }
 
-/** Leading day-of-month integer in the weekday cell, e.g. "dom 29 18-00" -> 29. */
+/**
+ * Leading day-of-month integer in the weekday cell, e.g. "dom 29 18-00" -> 29.
+ * The time slot is stripped FIRST so a slot start like the "11" in "sab 11-18"
+ * (a row with no day number at all) isn't mistaken for the 11th and falsely
+ * flagged as mis-dated.
+ */
 function leadingDayNumber(cell: string): number | null {
-  const m = cell.trim().match(/^[^\d]*(\d{1,2})\b/);
+  const norm = cell.replace(/[‒–—―−]/g, "-").replace(TIME_RANGE, " ");
+  const m = norm.trim().match(/^[^\d]*(\d{1,2})\b/);
   if (!m) return null;
   const n = Number(m[1]);
   return n >= 1 && n <= 31 ? n : null;

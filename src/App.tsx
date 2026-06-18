@@ -118,24 +118,35 @@ export function App() {
   );
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>, kind: ImportKind) {
-    const file = e.target.files?.[0];
     const input = e.target;
-    if (!file || !settings || !rates) return;
-    const text = await file.text();
+    const files = Array.from(input.files ?? []);
+    if (!files.length || !settings || !rates) return;
     try {
       if (kind === "history") {
-        const result = importHistoryCsv(text, rates, settings);
+        // History is a single full-replace file; use the first one.
+        const file = files[0];
+        const result = importHistoryCsv(await file.text(), rates, settings);
         await replaceSource("history.csv", result.shifts);
         setWarnings(result.warnings);
         setLastImport(`Imported ${result.shifts.length} worked shifts from ${file.name}`);
         setFilter("worked");
       } else {
-        const source = `plan:${file.name}`;
-        const result = importPlanCsv(text, source, rates, settings);
-        await replaceSource(source, result.shifts);
-        setWarnings(result.warnings);
+        // Plans: one file per week — import each as its own source, accumulate.
+        let totalShifts = 0;
+        let totalMatched = 0;
+        const allWarnings: ImportWarning[] = [];
+        for (const file of files) {
+          const source = `plan:${file.name}`;
+          const result = importPlanCsv(await file.text(), source, rates, settings);
+          await replaceSource(source, result.shifts);
+          totalShifts += result.shifts.length;
+          totalMatched += result.matched;
+          allWarnings.push(...result.warnings);
+        }
+        setWarnings(allWarnings);
+        const fileLabel = files.length === 1 ? files[0].name : `${files.length} files`;
         setLastImport(
-          `Imported ${result.shifts.length} planned shifts (${result.matched} cells matched ${settings.userName}) from ${file.name}`,
+          `Imported ${totalShifts} planned shifts (${totalMatched} cells matched ${settings.userName}) from ${fileLabel}`,
         );
         setFilter("planned");
       }
@@ -204,7 +215,7 @@ export function App() {
         <button onClick={() => planRef.current?.click()}>Import plan.csv</button>
         <input ref={historyRef} type="file" accept=".csv,text/csv" style={{ display: "none" }}
           onChange={(e) => handleFile(e, "history")} />
-        <input ref={planRef} type="file" accept=".csv,text/csv" style={{ display: "none" }}
+        <input ref={planRef} type="file" accept=".csv,text/csv" multiple style={{ display: "none" }}
           onChange={(e) => handleFile(e, "plan")} />
         <button onClick={() => setEditor({ shift: null })}>+ Add shift</button>
         <button onClick={exportCsv} disabled={!shifts.length}>Export CSV</button>
