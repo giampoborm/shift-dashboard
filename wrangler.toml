@@ -1,0 +1,20 @@
+# Cloudflare Workers (Static Assets) config. This is a static PWA with no
+# server code, so there is no Worker script (`main`) — wrangler just uploads the
+# built `dist/` folder as static assets.
+#
+# Flow on Cloudflare Builds:
+#   build command:  npm run build      -> produces ./dist
+#   deploy command: npx wrangler deploy -> reads this file, uploads ./dist
+#
+# `not_found_handling = "single-page-application"` makes unmatched paths serve
+# index.html (SPA fallback), so deep links don't 404. The _headers file in dist
+# (Cache-Control for /sw.js) is still honored by Static Assets.
+#
+# NOTE: `name` must match the Worker project name in the Cloudflare dashboard,
+# otherwise deploy targets a different Worker.
+name = "shift-dashboard"
+compatibility_date = "2024-11-01"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
