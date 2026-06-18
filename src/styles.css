@@ -287,3 +287,25 @@ button.danger { color: var(--bad); border-color: var(--bad); }
 .settings .unit { font-size: 0.78rem; min-width: 2.6rem; text-align: right; }
 .settings .editrow .saved, .settings .addrow .saved { margin: 0; }
 .settings .editrow .err { color: var(--bad); font-size: 0.74rem; flex-basis: 100%; }
+
+/* Cloud sync */
+.sync code { background: var(--panel-2); padding: 0.05rem 0.3rem; border-radius: 4px; font-size: 0.82em; }
+.sync .setup-help { margin: 0 0 0.9rem; }
+.sync .setup-help summary { cursor: pointer; color: var(--accent); font-size: 0.82rem; }
+.sync .setup-help ol { margin: 0.5rem 0 0; padding-left: 1.2rem; font-size: 0.8rem; line-height: 1.5; color: var(--muted); }
+.sync .setup-help li { margin-bottom: 0.3rem; }
+.sync .conflict {
+  margin-top: 0.8rem; padding: 0.8rem;
+  border: 1px solid var(--bad); border-radius: 10px;
+  background: color-mix(in srgb, var(--bad) 8%, transparent);
+}
+.sync .conflict-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.6rem; }
+.sync .conflict-card {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 0.6rem; display: flex; flex-direction: column; gap: 0.2rem;
+}
+button.linklike {
+  background: none; border: none; color: var(--muted);
+  padding: 0 0.2rem; cursor: pointer; font-size: 0.82rem;
+}
+button.linklike:hover { color: var(--text); }

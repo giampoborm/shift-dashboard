@@ -19,7 +19,7 @@ Tiered by value. **Tier 1 (PWA + Settings + deploy) is DONE** — only the icon 
 2. ~~**Settings panel**~~ — done: `src/components/Settings.tsx` + `src/lib/settingsStore.ts`, editable general/rates/payslips, Dexie-backed.
 3. ~~**Deploy**~~ — live on Cloudflare Workers (GitHub auto-deploy). See [[deployment]].
 
-**Tier 1.5 — next up: Google Drive appdata sync** ([[sync-approach]]) — cross-device sync so phone and PC share data (currently per-device IndexedDB).
+**Tier 1.5 — Google Drive appdata sync ✅ BUILT** ([[sync-approach]]) — cross-device sync via the user's own Drive `appdata` folder. Whole-file newer-wins + conflict guard; manual "Sync now" + silent pull/push on app open. `src/lib/dbSnapshot.ts` (pure: serialize/hash/`resolveSync`, tested) + `src/lib/driveSync.ts` (GIS token client + Drive REST, no backend → no refresh token) + `src/components/SyncPanel.tsx` (Settings section, in-app client-ID entry + conflict prompt). **Dormant until the user finishes the one-time Google Cloud OAuth setup** (create project, enable Drive API, consent screen in Testing + self as test user, scope `drive.appdata`, Web client with JS origins for the live URL + localhost), pastes the client ID into Settings, and clicks Connect.
 
 **Tier 2 — make the data talk**
 3. **Charts** (recharts already in deps) — tips/hour over time, tips by shift type, earnings by month, night-vs-day.
@@ -39,6 +39,9 @@ Tiered by value. **Tier 1 (PWA + Settings + deploy) is DONE** — only the icon 
 - `src/lib/db.ts` — Dexie schema + seeded defaults (rate table €14.50→€15.50 Apr, 4 real payslips, settings). NOTE: `source` is **not** indexed — filter, don't `.where()`.
 - `src/lib/estimates.ts` — future-earnings estimate engine; buckets (morning-weekday/weekend, evening, evening-sunday), p25/median/p75 with bucket→family→all fallback.
 - `src/lib/exportCsv.ts` — derived-earnings CSV export + download helper.
+- `src/lib/dbSnapshot.ts` — whole-DB snapshot (serialize/apply all 5 tables) + pure content-`hashData` + `resolveSync` merge decision (first-push/in-sync/push/pull/conflict). Tested. `SNAPSHOT_SCHEMA` bumps with the Dexie version.
+- `src/lib/driveSync.ts` — Google Drive sync plumbing: lazy GIS script load, in-browser token client (no refresh token), Drive REST against `appDataFolder`, sync metadata in localStorage, `sync()`/`resolveConflict()`/`syncOnOpen()`.
+- `src/components/SyncPanel.tsx` — Drive sync section in Settings (client-ID entry, Connect/Sync/Disconnect, conflict guard prompt). Wired into `App.tsx` (silent `syncOnOpen` on mount + status banner; `refreshSettings` after a pull replaces the DB).
 - `src/components/ShiftEditor.tsx` — add/edit/delete modal, post-shift entry (planned→worked), swap-out + swapped-in chaining.
 - `src/components/Calendar.tsx` — custom Monday-start month grid; type-coloured chips (worked=filled, planned=outline, swapped=struck); click day→add, click chip→edit.
 - `src/components/VacationPlanner.tsx` — dual-basis budget bars + range cards; lazy-loaded (isolates heavy `date-holidays`). `src/lib/vacation.ts` — pure vacation math.

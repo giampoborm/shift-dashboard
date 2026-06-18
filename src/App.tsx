@@ -13,6 +13,7 @@ import {
   sumEstimates,
   type Range,
 } from "./lib/estimates";
+import { syncOnOpen } from "./lib/driveSync";
 import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
 import { Calendar } from "./components/Calendar";
 import { Settings as SettingsPanel } from "./components/Settings";
@@ -52,8 +53,28 @@ export function App() {
   const historyRef = useRef<HTMLInputElement>(null);
   const planRef = useRef<HTMLInputElement>(null);
 
+  const [syncMsg, setSyncMsg] = useState("");
+
+  function refreshSettings() {
+    getSettings().then(setSettings);
+  }
+
   useEffect(() => {
-    ensureSeeded().then(getSettings).then(setSettings);
+    ensureSeeded()
+      .then(getSettings)
+      .then(setSettings)
+      .then(() =>
+        syncOnOpen().then((r) => {
+          if (!r) return;
+          if (r.status === "pulled") {
+            refreshSettings();
+            setSyncMsg("Synced latest from Google Drive ✓");
+          } else if (r.status === "conflict") {
+            setSyncMsg("Sync conflict — open ⚙ Settings to choose which copy to keep.");
+          }
+        }),
+      )
+      .catch(() => {});
   }, []);
 
   const allShifts = useLiveQuery(() => db.shifts.orderBy("date").toArray(), []);
@@ -203,6 +224,12 @@ export function App() {
       </div>
 
       {lastImport && <p className="muted" style={{ fontSize: "0.82rem", marginTop: "-0.5rem" }}>{lastImport}</p>}
+      {syncMsg && (
+        <p className="muted" style={{ fontSize: "0.82rem", marginTop: "-0.25rem" }}>
+          {syncMsg}{" "}
+          <button className="linklike" onClick={() => setSyncMsg("")} title="Dismiss">✕</button>
+        </p>
+      )}
 
       {counts.all > 0 && (
         <div className="tabs">
@@ -277,6 +304,7 @@ export function App() {
           rates={rates!}
           payslips={payslips!}
           onSettingsSaved={setSettings}
+          onDataReplaced={refreshSettings}
         />
       ) : ready && isVacation ? (
         <Suspense fallback={<div className="empty">Loading…</div>}>

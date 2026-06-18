@@ -19,18 +19,21 @@ import {
   validateSettings,
 } from "../lib/settingsStore";
 import type { GrossRate, Payslip, Settings as SettingsT } from "../lib/types";
+import { SyncPanel } from "./SyncPanel";
 
 export function Settings(props: {
   settings: SettingsT;
   rates: GrossRate[];
   payslips: Payslip[];
   onSettingsSaved: (s: SettingsT) => void;
+  onDataReplaced: () => void;
 }) {
   return (
     <div className="settings">
       <GeneralSection settings={props.settings} onSaved={props.onSettingsSaved} />
       <RatesSection rates={props.rates} />
       <PayslipsSection payslips={props.payslips} />
+      <SyncPanel onDataReplaced={props.onDataReplaced} />
     </div>
   );
 }
