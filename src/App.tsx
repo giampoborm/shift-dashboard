@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
+import { addMonths, format, startOfMonth, subMonths } from "date-fns";
 import { db, ensureSeeded, getSettings } from "./lib/db";
 import { importHistoryCsv, type ImportWarning } from "./lib/importHistory";
 import { importPlanCsv, plannedHours } from "./lib/importPlan";
@@ -7,32 +8,35 @@ import { computeShiftEarnings, sumEarnings } from "./lib/earnings";
 import { weekdayOf } from "./lib/shiftTime";
 import { formatDate } from "./lib/format";
 import { shiftsToCsv, downloadText } from "./lib/exportCsv";
-import {
-  BUCKET_LABELS,
-  estimateShift,
-  sumEstimates,
-  type Range,
-} from "./lib/estimates";
+import { estimateShift, sumEstimates, type Range } from "./lib/estimates";
+import { nextShiftFrom, shiftsInMonth } from "./lib/period";
 import { syncOnOpen } from "./lib/driveSync";
 import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
 import { Calendar } from "./components/Calendar";
 import { Settings as SettingsPanel } from "./components/Settings";
 import type { GrossRate, Payslip, Settings, Shift, ShiftType } from "./lib/types";
 
-// Code-split: pulls in date-holidays (heavy) only when the Vacation tab is opened.
+// Code-split: pulls in date-holidays (heavy) only when the Vacation tool is opened.
 const VacationPlanner = lazy(() =>
   import("./components/VacationPlanner").then((m) => ({ default: m.VacationPlanner })),
 );
-// Code-split: recharts is heavy — load it only when the Charts tab is opened.
+// Code-split: recharts is heavy — load it only when Analysis graphs render.
 const Charts = lazy(() => import("./components/Charts").then((m) => ({ default: m.Charts })));
 
 const eur = (n: number) => `€${n.toFixed(2)}`;
+const eur0 = (n: number) => `€${Math.round(n)}`;
 const eurRange = (r: Range) => `€${Math.round(r.p25)}–${Math.round(r.p75)}`;
 
 const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SHIFT_TYPES: ShiftType[] = ["opening", "late-morning", "mid-day", "early-closing", "closing"];
 
-type Filter = "worked" | "planned" | "all" | "calendar" | "charts" | "vacation" | "settings";
+// The three "rooms" of the redesigned IA (+ Settings reachable via the gear).
+type Room = "home" | "analysis" | "tools" | "settings";
+const ROOMS: { id: Room; label: string }[] = [
+  { id: "home", label: "Home" },
+  { id: "analysis", label: "Analysis" },
+  { id: "tools", label: "Tools" },
+];
 type ImportKind = "history" | "plan";
 
 interface ColumnFilters {
@@ -49,8 +53,7 @@ export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [warnings, setWarnings] = useState<ImportWarning[]>([]);
   const [lastImport, setLastImport] = useState<string>("");
-  const [filter, setFilter] = useState<Filter>("worked");
-  const [filters, setFilters] = useState<ColumnFilters>(EMPTY_FILTERS);
+  const [room, setRoom] = useState<Room>("home");
   const [editor, setEditor] = useState<{ shift: Shift | null; prefill?: EditorPrefill } | null>(null);
   const historyRef = useRef<HTMLInputElement>(null);
   const planRef = useRef<HTMLInputElement>(null);
@@ -85,30 +88,6 @@ export function App() {
 
   const ready = settings && rates && payslips && allShifts;
 
-  const tabShifts = useMemo(() => {
-    if (!allShifts) return [];
-    if (filter === "all") return allShifts;
-    if (filter === "planned")
-      return allShifts.filter((s) => s.status === "planned" || s.status === "swapped-in");
-    return allShifts.filter((s) => s.status === "worked");
-  }, [allShifts, filter]);
-
-  const shifts = useMemo(() => {
-    return tabShifts.filter((s) => {
-      if (filters.type !== "all" && s.shiftType !== filters.type) return false;
-      if (filters.station !== "all" && s.station !== filters.station) return false;
-      if (filters.from && s.date < filters.from) return false;
-      if (filters.to && s.date > filters.to) return false;
-      if (filters.weekday !== "all" && new Date(s.date + "T00:00").getDay() !== filters.weekday)
-        return false;
-      if (filters.q) {
-        const hay = `${s.date} ${s.station} ${s.shiftType} ${s.plannedStart ?? ""} ${weekdayOf(s.date)}`.toLowerCase();
-        if (!hay.includes(filters.q.toLowerCase())) return false;
-      }
-      return true;
-    });
-  }, [tabShifts, filters]);
-
   const workedHistory = useMemo(
     () => (allShifts ?? []).filter((s) => s.status === "worked"),
     [allShifts],
@@ -125,15 +104,12 @@ export function App() {
     if (!files.length || !settings || !rates) return;
     try {
       if (kind === "history") {
-        // History is a single full-replace file; use the first one.
         const file = files[0];
         const result = importHistoryCsv(await file.text(), rates, settings);
         await replaceSource("history.csv", result.shifts);
         setWarnings(result.warnings);
         setLastImport(`Imported ${result.shifts.length} worked shifts from ${file.name}`);
-        setFilter("worked");
       } else {
-        // Plans: one file per week — import each as its own source, accumulate.
         let totalShifts = 0;
         let totalMatched = 0;
         const allWarnings: ImportWarning[] = [];
@@ -150,7 +126,6 @@ export function App() {
         setLastImport(
           `Imported ${totalShifts} planned shifts (${totalMatched} cells matched ${settings.userName}) from ${fileLabel}`,
         );
-        setFilter("planned");
       }
     } catch (err) {
       console.error("Import failed:", err);
@@ -174,163 +149,45 @@ export function App() {
     setLastImport("");
   }
 
-  function exportCsv() {
-    if (!shifts.length || !rates || !payslips || !settings) return;
-    const csv = shiftsToCsv(shifts, rates, payslips, settings);
-    downloadText(`shifts-${filter}-${new Date().toISOString().slice(0, 10)}.csv`, csv);
-  }
-
-  const workedInView = shifts.filter((s) => s.status === "worked");
-  const totals =
-    ready && workedInView.length
-      ? sumEarnings(workedInView, rates!, payslips!, settings!)
-      : null;
-
-  const warns = warnings.filter((w) => w.severity === "warn");
-  const infos = warnings.filter((w) => w.severity === "info");
-
-  const counts = {
-    worked: allShifts?.filter((s) => s.status === "worked").length ?? 0,
-    planned: allShifts?.filter((s) => s.status === "planned" || s.status === "swapped-in").length ?? 0,
-    all: allShifts?.length ?? 0,
-  };
-
-  const isPlannedView = filter === "planned";
-  const isCalendar = filter === "calendar";
-  const isCharts = filter === "charts";
-  const isVacation = filter === "vacation";
-  const isSettings = filter === "settings";
-  const isTool = isCalendar || isCharts || isVacation || isSettings; // non-table full-width views
-  const estTotals =
-    ready && isPlannedView && shifts.length
-      ? sumEstimates(shifts, workedHistory, rates!, payslips!, settings!)
-      : null;
-
   return (
     <div className="app">
-      <h1>Shift Dashboard</h1>
-      <p className="subtitle">Local-first shift, tip &amp; earnings tracker — Phase 1</p>
+      <header className="topbar">
+        <h1>Shift Dashboard</h1>
+        <nav className="rooms">
+          {ROOMS.map((r) => (
+            <button
+              key={r.id}
+              className={`tab ${room === r.id ? "active" : ""}`}
+              onClick={() => setRoom(r.id)}
+            >
+              {r.label}
+            </button>
+          ))}
+        </nav>
+        <div className="topbar-actions">
+          <button className="primary" onClick={() => setEditor({ shift: null })}>+ Log</button>
+          <button
+            className={`tab ${room === "settings" ? "active" : ""}`}
+            onClick={() => setRoom("settings")}
+            title="Settings"
+          >
+            ⚙
+          </button>
+        </div>
+      </header>
 
-      <div className="toolbar">
-        <button className="primary" onClick={() => historyRef.current?.click()}>
-          Import history.csv
-        </button>
-        <button onClick={() => planRef.current?.click()}>Import plan.csv</button>
-        <input ref={historyRef} type="file" accept=".csv,text/csv" style={{ display: "none" }}
-          onChange={(e) => handleFile(e, "history")} />
-        <input ref={planRef} type="file" accept=".csv,text/csv" multiple style={{ display: "none" }}
-          onChange={(e) => handleFile(e, "plan")} />
-        <button onClick={() => setEditor({ shift: null })}>+ Add shift</button>
-        <button onClick={exportCsv} disabled={!shifts.length}>Export CSV</button>
-        <button onClick={clearAll} disabled={!counts.all}>Clear</button>
-        <button
-          className={`tab ${filter === "settings" ? "active" : ""}`}
-          style={{ marginLeft: "auto" }}
-          onClick={() => setFilter("settings")}
-        >
-          ⚙ Settings
-        </button>
-        {settings && filter !== "settings" && (
-          <span className="muted" style={{ fontSize: "0.8rem" }}>
-            {settings.userName} · tip pool {Math.round(settings.tipPoolRate * 100)}% · close {settings.closingTime}
-          </span>
-        )}
-      </div>
-
-      {lastImport && <p className="muted" style={{ fontSize: "0.82rem", marginTop: "-0.5rem" }}>{lastImport}</p>}
       {syncMsg && (
-        <p className="muted" style={{ fontSize: "0.82rem", marginTop: "-0.25rem" }}>
+        <p className="muted" style={{ fontSize: "0.82rem" }}>
           {syncMsg}{" "}
           <button className="linklike" onClick={() => setSyncMsg("")} title="Dismiss">✕</button>
         </p>
       )}
 
-      {counts.all > 0 && (
-        <div className="tabs">
-          {(["worked", "planned", "all", "calendar", "charts", "vacation"] as Filter[]).map((f) => (
-            <button key={f} className={`tab ${filter === f ? "active" : ""}`} onClick={() => setFilter(f)}>
-              {f[0].toUpperCase() + f.slice(1)}
-              {f !== "calendar" && f !== "charts" && f !== "vacation" && (
-                <span className="muted"> ({counts[f as keyof typeof counts]})</span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {counts.all > 0 && !isTool && (
-        <FilterBar
-          filters={filters}
-          stations={stations}
-          shown={shifts.length}
-          total={tabShifts.length}
-          onChange={setFilters}
-        />
-      )}
-
-      {estTotals && (
-        <div className="cards">
-          <Card label="Planned shifts" value={String(estTotals.shifts)} />
-          <Card label="Est. hours" value={`~${estTotals.hours.toFixed(1)}`} />
-          <Card label="Est. net wage" value={`~${eur(estTotals.netWage)}`} sub="hours × rate × net factor" />
-          <Card label="Est. take-home" value={eurRange(estTotals.takeHome)} sub={`median ${eur(estTotals.takeHome.median)}`} accent />
-        </div>
-      )}
-
-      {!isPlannedView && !isTool && totals && (
-        <div className="cards">
-          <Card label="Worked shifts" value={String(totals.shifts)} sub={`${totals.workingDays} working days`} />
-          <Card label="Hours" value={totals.hours.toFixed(1)} />
-          <Card label="Gross pay" value={eur(totals.grossPay)} sub="wage only" />
-          <Card label="Net pay" value={eur(totals.netPay)} />
-          <Card label="Usable tips" value={eur(totals.usableTips)} sub={`of ${eur(totals.reportedTips)} reported`} />
-          <Card label="Take-home" value={eur(totals.takeHome)} accent />
-        </div>
-      )}
-
-      {warns.length > 0 && (
-        <details className="warnings" open>
-          <summary>{warns.length} anomaly warning(s) — review, nothing was auto-fixed</summary>
-          <ul>
-            {warns.map((w, i) => (
-              <li key={i}>
-                <span className="row-no">row {w.row}</span>{w.date ? ` (${formatDate(w.date)})` : ""}: {w.message}
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-
-      {infos.length > 0 && (
-        <details className="warnings info">
-          <summary>{infos.length} info note(s) — expected CSV cross-check drift (the pre-April €14.50 estimates)</summary>
-          <ul>
-            {infos.slice(0, 100).map((w, i) => (
-              <li key={i}><span className="row-no">row {w.row}</span>{w.date ? ` (${formatDate(w.date)})` : ""}: {w.message}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-
-      {ready && isSettings ? (
-        <SettingsPanel
-          settings={settings!}
-          rates={rates!}
-          payslips={payslips!}
-          onSettingsSaved={setSettings}
-          onDataReplaced={refreshSettings}
-        />
-      ) : ready && isCharts ? (
-        <Suspense fallback={<div className="empty">Loading…</div>}>
-          <Charts worked={workedHistory} rates={rates!} payslips={payslips!} settings={settings!} />
-        </Suspense>
-      ) : ready && isVacation ? (
-        <Suspense fallback={<div className="empty">Loading…</div>}>
-          <VacationPlanner worked={workedHistory} settings={settings!} />
-        </Suspense>
-      ) : ready && isCalendar ? (
-        <Calendar
-          shifts={allShifts!}
+      {!ready ? (
+        <div className="empty">Loading…</div>
+      ) : room === "home" ? (
+        <Home
+          allShifts={allShifts!}
           worked={workedHistory}
           settings={settings!}
           rates={rates!}
@@ -338,32 +195,42 @@ export function App() {
           onEditShift={(s) => setEditor({ shift: s })}
           onAddShift={(date) => setEditor({ shift: null, prefill: { date } })}
         />
-      ) : ready && shifts.length > 0 ? (
-        isPlannedView ? (
-          <EstimateTable
-            shifts={shifts}
-            worked={workedHistory}
-            settings={settings!}
-            rates={rates!}
-            payslips={payslips!}
-            onEdit={(s) => setEditor({ shift: s })}
-          />
-        ) : (
-          <ShiftTable
-            shifts={shifts}
-            settings={settings!}
-            rates={rates!}
-            payslips={payslips!}
-            onEdit={(s) => setEditor({ shift: s })}
-          />
-        )
+      ) : room === "analysis" ? (
+        <Analysis
+          allShifts={allShifts!}
+          worked={workedHistory}
+          settings={settings!}
+          rates={rates!}
+          payslips={payslips!}
+          stations={stations}
+          onEditShift={(s) => setEditor({ shift: s })}
+        />
+      ) : room === "tools" ? (
+        <Tools
+          worked={workedHistory}
+          settings={settings!}
+          lastImport={lastImport}
+          warnings={warnings}
+          hasShifts={allShifts!.length > 0}
+          onImportHistory={() => historyRef.current?.click()}
+          onImportPlan={() => planRef.current?.click()}
+          onClear={clearAll}
+        />
       ) : (
-        <div className="empty">
-          {isPlannedView
-            ? "No planned shifts. Import a plan CSV, or + Add shift manually."
-            : "No shifts in this view. Import data/history.csv (worked) or data/plan-*.csv (planned). You can also + Add shift manually."}
-        </div>
+        <SettingsPanel
+          settings={settings!}
+          rates={rates!}
+          payslips={payslips!}
+          onSettingsSaved={setSettings}
+          onDataReplaced={refreshSettings}
+        />
       )}
+
+      {/* Hidden file inputs — bulk capture, triggered from the Tools room. */}
+      <input ref={historyRef} type="file" accept=".csv,text/csv" style={{ display: "none" }}
+        onChange={(e) => handleFile(e, "history")} />
+      <input ref={planRef} type="file" accept=".csv,text/csv" multiple style={{ display: "none" }}
+        onChange={(e) => handleFile(e, "plan")} />
 
       {editor && settings && rates && (
         <ShiftEditor
@@ -380,12 +247,269 @@ export function App() {
   );
 }
 
-function Card(props: { label: string; value: string; sub?: string; accent?: boolean }) {
+// ─────────────────────────────────────────────────────────────────────────────
+// HOME — one month at a time. The calendar IS the time filter. Money for the month
+// falls out of shift status automatically: worked → actual, planned → estimate.
+// A today-anchored next-shift card sits on top and never moves with the viewed month.
+// ─────────────────────────────────────────────────────────────────────────────
+function Home(props: {
+  allShifts: Shift[];
+  worked: Shift[];
+  settings: Settings;
+  rates: GrossRate[];
+  payslips: Payslip[];
+  onEditShift: (s: Shift) => void;
+  onAddShift: (dateIso: string) => void;
+}) {
+  const { allShifts, worked, settings, rates, payslips, onEditShift, onAddShift } = props;
+  const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
+
+  const next = useMemo(() => nextShiftFrom(allShifts, new Date()), [allShifts]);
+
+  const month = useMemo(() => {
+    const inMonth = shiftsInMonth(allShifts, cursor);
+    const workedM = inMonth.filter((s) => s.status === "worked");
+    const plannedM = inMonth.filter((s) => s.status === "planned" || s.status === "swapped-in");
+    const banked = sumEarnings(workedM, rates, payslips, settings);
+    const projected = sumEstimates(plannedM, worked, rates, payslips, settings);
+    // One row per money category, each split into what's banked (worked actuals) vs
+    // projected (planned estimates) — the actual-vs-estimate blend, made visible.
+    return {
+      workedCount: workedM.length,
+      plannedCount: plannedM.length,
+      takeHome: { banked: banked.takeHome, projected: projected.takeHome.median },
+      gross: { banked: banked.grossPay, projected: projected.grossWage },
+      net: { banked: banked.netPay, projected: projected.netWage },
+      tips: { banked: banked.usableTips, projected: projected.usableTips.median },
+    };
+  }, [allShifts, cursor, worked, rates, payslips, settings]);
+
   return (
-    <div className="card">
+    <div className="room home">
+      {next && (
+        <div className="next-shift card" onClick={() => onEditShift(next)} role="button">
+          <div className="label">Next shift</div>
+          <div className="value">
+            {weekdayOf(next.date).slice(0, 3)} {formatDate(next.date)}
+          </div>
+          <div className="sub">
+            {next.station} · {next.shiftType}
+            {next.plannedStart ? ` · ${next.plannedStart}–${next.openEnd ? "Ende" : next.plannedEnd ?? "?"}` : ""}
+            {next.status !== "planned" ? ` · ${next.status}` : ""}
+          </div>
+        </div>
+      )}
+
+      <div className="month-nav">
+        <button onClick={() => setCursor(addMonths(cursor, -1))}>‹</button>
+        <strong>{format(cursor, "MMMM yyyy")}</strong>
+        <button onClick={() => setCursor(addMonths(cursor, 1))}>›</button>
+        <button onClick={() => setCursor(startOfMonth(new Date()))}>This month</button>
+      </div>
+
+      <MoneyCard label="Take-home" money={month.takeHome} hero
+        countSub={`${month.workedCount} worked · ${month.plannedCount} planned`} />
+      <div className="cards">
+        <MoneyCard label="Gross (brutto)" money={month.gross} />
+        <MoneyCard label="Net wage (netto)" money={month.net} />
+        <MoneyCard label="Usable tips" money={month.tips} />
+      </div>
+
+      <Calendar
+        shifts={allShifts}
+        worked={worked}
+        settings={settings}
+        rates={rates}
+        payslips={payslips}
+        cursor={cursor}
+        onCursorChange={setCursor}
+        hideNav
+        onEditShift={onEditShift}
+        onAddShift={onAddShift}
+      />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ANALYSIS — a range of months, two altitudes of the SAME data: graphs lead,
+// the shift table is the drill-down substrate beneath them.
+// ─────────────────────────────────────────────────────────────────────────────
+const RANGES = [3, 6, 12] as const;
+function Analysis(props: {
+  allShifts: Shift[];
+  worked: Shift[];
+  settings: Settings;
+  rates: GrossRate[];
+  payslips: Payslip[];
+  stations: string[];
+  onEditShift: (s: Shift) => void;
+}) {
+  const { allShifts, worked, settings, rates, payslips, stations, onEditShift } = props;
+  const [rangeMonths, setRangeMonths] = useState<number | "all">(6);
+  const [filters, setFilters] = useState<ColumnFilters>(EMPTY_FILTERS);
+
+  const fromDate = useMemo(
+    () => (rangeMonths === "all" ? "" : format(subMonths(startOfMonth(new Date()), rangeMonths - 1), "yyyy-MM-dd")),
+    [rangeMonths],
+  );
+
+  const inRange = useMemo(() => {
+    return allShifts.filter((s) => {
+      if (fromDate && s.date < fromDate) return false;
+      if (filters.type !== "all" && s.shiftType !== filters.type) return false;
+      if (filters.station !== "all" && s.station !== filters.station) return false;
+      if (filters.from && s.date < filters.from) return false;
+      if (filters.to && s.date > filters.to) return false;
+      if (filters.weekday !== "all" && new Date(s.date + "T00:00").getDay() !== filters.weekday)
+        return false;
+      if (filters.q) {
+        const hay = `${s.date} ${s.station} ${s.shiftType} ${s.plannedStart ?? ""} ${weekdayOf(s.date)}`.toLowerCase();
+        if (!hay.includes(filters.q.toLowerCase())) return false;
+      }
+      return true;
+    });
+  }, [allShifts, fromDate, filters]);
+
+  const workedInRange = useMemo(() => inRange.filter((s) => s.status === "worked"), [inRange]);
+
+  function exportCsv() {
+    const csv = shiftsToCsv(inRange, rates, payslips, settings);
+    downloadText(`shifts-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  }
+
+  return (
+    <div className="room analysis">
+      <div className="range-nav">
+        {RANGES.map((n) => (
+          <button key={n} className={`tab ${rangeMonths === n ? "active" : ""}`} onClick={() => setRangeMonths(n)}>
+            {n}M
+          </button>
+        ))}
+        <button className={`tab ${rangeMonths === "all" ? "active" : ""}`} onClick={() => setRangeMonths("all")}>
+          All
+        </button>
+        <button style={{ marginLeft: "auto" }} onClick={exportCsv} disabled={!inRange.length}>
+          Export CSV
+        </button>
+      </div>
+
+      {/* Altitude 1 — graphs (the patterns / insight). */}
+      <Suspense fallback={<div className="empty">Loading charts…</div>}>
+        <Charts worked={workedInRange} rates={rates} payslips={payslips} settings={settings} />
+      </Suspense>
+
+      {/* Altitude 2 — the substrate: the underlying rows, filterable. */}
+      <FilterBar filters={filters} stations={stations} shown={inRange.length} onChange={setFilters} />
+      {inRange.length > 0 ? (
+        <ShiftTable
+          shifts={inRange}
+          settings={settings}
+          rates={rates}
+          payslips={payslips}
+          worked={worked}
+          onEdit={onEditShift}
+        />
+      ) : (
+        <div className="empty">No shifts in this range/filter.</div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TOOLS — power-tools tucked away: bulk CSV import, vacation calculator, and (soon)
+// the shift optimizer. Plus import warnings, which belong with the import action.
+// ─────────────────────────────────────────────────────────────────────────────
+function Tools(props: {
+  worked: Shift[];
+  settings: Settings;
+  lastImport: string;
+  warnings: ImportWarning[];
+  hasShifts: boolean;
+  onImportHistory: () => void;
+  onImportPlan: () => void;
+  onClear: () => void;
+}) {
+  const { worked, settings, lastImport, warnings, hasShifts, onImportHistory, onImportPlan, onClear } = props;
+  const warns = warnings.filter((w) => w.severity === "warn");
+  const infos = warnings.filter((w) => w.severity === "info");
+
+  return (
+    <div className="room tools">
+      <div className="card">
+        <div className="label">Bulk import</div>
+        <div className="toolbar" style={{ marginTop: "0.5rem" }}>
+          <button className="primary" onClick={onImportHistory}>Import history.csv</button>
+          <button onClick={onImportPlan}>Import plan.csv</button>
+          <button onClick={onClear} disabled={!hasShifts}>Clear all</button>
+        </div>
+        {lastImport && <p className="muted" style={{ fontSize: "0.82rem" }}>{lastImport}</p>}
+      </div>
+
+      {warns.length > 0 && (
+        <details className="warnings" open>
+          <summary>{warns.length} anomaly warning(s) — review, nothing was auto-fixed</summary>
+          <ul>
+            {warns.map((w, i) => (
+              <li key={i}>
+                <span className="row-no">row {w.row}</span>{w.date ? ` (${formatDate(w.date)})` : ""}: {w.message}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+      {infos.length > 0 && (
+        <details className="warnings info">
+          <summary>{infos.length} info note(s) — expected CSV cross-check drift (the pre-April €14.50 estimates)</summary>
+          <ul>
+            {infos.slice(0, 100).map((w, i) => (
+              <li key={i}><span className="row-no">row {w.row}</span>{w.date ? ` (${formatDate(w.date)})` : ""}: {w.message}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      <Suspense fallback={<div className="empty">Loading…</div>}>
+        <VacationPlanner worked={worked} settings={settings} />
+      </Suspense>
+
+      <div className="card">
+        <div className="label">Shift optimizer</div>
+        <div className="sub">
+          Coming soon — "I want ~7 days off in August → which window costs the fewest scheduled
+          shifts and bridges the most public holidays?"
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// A money figure for the month: total on top, banked/projected breakdown underneath.
+// The breakdown adapts to the month — pure-past = all banked, pure-future = all
+// projected (~), current = a real mix.
+function MoneyCard(props: {
+  label: string;
+  money: { banked: number; projected: number };
+  hero?: boolean;
+  countSub?: string;
+}) {
+  const { banked, projected } = props.money;
+  const total = banked + projected;
+  const mixed = banked > 0.5 && projected > 0.5;
+  const breakdown = mixed
+    ? `${eur0(banked)} banked · ~${eur0(projected)} projected`
+    : projected > 0.5
+      ? "all projected"
+      : "all banked";
+  return (
+    <div className={`card${props.hero ? " hero" : ""}`}>
       <div className="label">{props.label}</div>
-      <div className="value" style={props.accent ? { color: "var(--good)" } : undefined}>{props.value}</div>
-      {props.sub && <div className="sub">{props.sub}</div>}
+      <div className="value" style={props.hero ? { color: "var(--good)" } : undefined}>
+        {projected > 0.5 && banked <= 0.5 ? "~" : ""}{eur0(total)}
+      </div>
+      <div className="sub">{breakdown}</div>
+      {props.countSub && <div className="sub">{props.countSub}</div>}
     </div>
   );
 }
@@ -394,10 +518,9 @@ function FilterBar(props: {
   filters: ColumnFilters;
   stations: string[];
   shown: number;
-  total: number;
   onChange: (f: ColumnFilters) => void;
 }) {
-  const { filters, stations, shown, total, onChange } = props;
+  const { filters, stations, shown, onChange } = props;
   const set = (patch: Partial<ColumnFilters>) => onChange({ ...filters, ...patch });
   const active =
     filters.q || filters.type !== "all" || filters.weekday !== "all" ||
@@ -422,71 +545,22 @@ function FilterBar(props: {
       <input type="date" title="From" value={filters.from} onChange={(e) => set({ from: e.target.value })} />
       <input type="date" title="To" value={filters.to} onChange={(e) => set({ to: e.target.value })} />
       {active && <button onClick={() => onChange(EMPTY_FILTERS)}>Reset</button>}
-      <span className="muted" style={{ marginLeft: "auto", fontSize: "0.78rem" }}>{shown}/{total}</span>
+      <span className="muted" style={{ marginLeft: "auto", fontSize: "0.78rem" }}>{shown} shifts</span>
     </div>
   );
 }
 
-function EstimateTable(props: {
-  shifts: Shift[];
-  worked: Shift[];
-  settings: Settings;
-  rates: GrossRate[];
-  payslips: Payslip[];
-  onEdit: (s: Shift) => void;
-}) {
-  const { shifts, worked, settings, rates, payslips, onEdit } = props;
-  return (
-    <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th className="l">Date</th><th className="l">Day</th><th className="l">Type</th>
-            <th className="l">Station</th><th className="l">Slot</th><th className="l">Bucket</th>
-            <th>Est. h</th><th>Rate</th><th>Net wage</th>
-            <th>Est. tips</th><th>Est. take-home</th>
-            <th className="l" title="How much history backs the estimate: bucket > family > all (⚠ = thin sample)">Est. from</th>
-          </tr>
-        </thead>
-        <tbody>
-          {shifts.map((s) => {
-            const e = estimateShift(s, worked, rates, payslips, settings);
-            const slot = s.plannedStart
-              ? `${s.plannedStart}–${s.openEnd ? "Ende" : s.plannedEnd ?? "?"}`
-              : "—";
-            return (
-              <tr key={s.id} className="clickable" onClick={() => onEdit(s)}>
-                <td className="l">{formatDate(s.date)}</td>
-                <td className="l">{weekdayOf(s.date).slice(0, 3)}</td>
-                <td className="l"><span className={`tag ${s.shiftType}`}>{s.shiftType}</span></td>
-                <td className="l muted">{s.station}</td>
-                <td className="l muted">{slot}</td>
-                <td className="l muted">{BUCKET_LABELS[e.bucket]}</td>
-                <td className="muted">~{e.hours.toFixed(1)}</td>
-                <td className="muted">{e.rate ? eur(e.rate) : "—"}</td>
-                <td>{eur(e.netWage)}</td>
-                <td className="muted">{eurRange(e.usableTips)}</td>
-                <td className="pos">{eurRange(e.takeHome)}</td>
-                <td className="l muted" title={`${e.n} past shifts`}>
-                  {e.basis}{e.confident ? "" : " ⚠"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
+// Shift table — the substrate beneath Analysis graphs. Worked rows show actuals;
+// planned/swapped-in rows show the median estimate so the table reads as one body.
 function ShiftTable(props: {
   shifts: Shift[];
   settings: Settings;
-  rates: Parameters<typeof computeShiftEarnings>[1];
-  payslips: Parameters<typeof computeShiftEarnings>[2];
+  rates: GrossRate[];
+  payslips: Payslip[];
+  worked: Shift[];
   onEdit: (s: Shift) => void;
 }) {
-  const { shifts, settings, rates, payslips, onEdit } = props;
+  const { shifts, settings, rates, payslips, worked, onEdit } = props;
   return (
     <div className="table-wrap">
       <table>
@@ -501,9 +575,34 @@ function ShiftTable(props: {
         </thead>
         <tbody>
           {shifts.map((s) => {
-            const planned = s.status === "planned";
+            const planned = s.status === "planned" || s.status === "swapped-in";
             const e = computeShiftEarnings(s, rates, payslips, settings);
-            const ph = plannedHours(s.plannedStart, s.plannedEnd, s.openEnd, settings.closingTime);
+            if (planned) {
+              const est = estimateShift(s, worked, rates, payslips, settings);
+              const ph = plannedHours(s.plannedStart, s.plannedEnd, s.openEnd, settings.closingTime);
+              const slot = s.plannedStart
+                ? `${s.plannedStart}–${s.openEnd ? "Ende" : s.plannedEnd ?? "?"}`
+                : "—";
+              return (
+                <tr key={s.id} className={`clickable ${s.status.startsWith("swapped") ? "dim" : ""}`} onClick={() => onEdit(s)}>
+                  <td className="l">{formatDate(s.date)}</td>
+                  <td className="l">{weekdayOf(s.date).slice(0, 3)}</td>
+                  <td className="l"><span className="tag planned">{s.status}</span></td>
+                  <td className="l"><span className={`tag ${s.shiftType}`}>{s.shiftType}</span></td>
+                  <td className="l muted">{s.station}</td>
+                  <td className="l muted">{slot}</td>
+                  <td className="muted">{ph != null ? `~${ph.toFixed(1)}` : "—"}</td>
+                  <td className="muted">{est.rate ? eur(est.rate) : "—"}</td>
+                  <td className="muted">{ph != null && est.rate ? `~${eur(ph * est.rate)}` : "—"}</td>
+                  <td className="muted">~{eur(est.netWage)}</td>
+                  <td className="muted">—</td>
+                  <td className="muted">{eurRange(est.usableTips)}</td>
+                  <td className="pos">{eurRange(est.takeHome)}</td>
+                  <td className="muted">—</td>
+                  <td>{e.workingDays}</td>
+                </tr>
+              );
+            }
             const slot = s.plannedStart
               ? `${s.plannedStart}–${s.openEnd ? "Ende" : s.plannedEnd ?? "?"}`
               : "—";
@@ -511,32 +610,19 @@ function ShiftTable(props: {
               <tr key={s.id} className={`clickable ${s.status.startsWith("swapped") ? "dim" : ""}`} onClick={() => onEdit(s)}>
                 <td className="l">{formatDate(s.date)}</td>
                 <td className="l">{weekdayOf(s.date).slice(0, 3)}</td>
-                <td className="l"><span className={`tag ${planned ? "planned" : "worked"}`}>{s.status}</span></td>
+                <td className="l"><span className="tag worked">{s.status}</span></td>
                 <td className="l"><span className={`tag ${s.shiftType}`}>{s.shiftType}</span></td>
                 <td className="l muted">{s.station}</td>
                 <td className="l muted">{slot}</td>
-                {planned ? (
-                  <>
-                    <td className="muted">{ph != null ? `~${ph.toFixed(1)}` : "—"}</td>
-                    <td className="muted">{s.grossRate ? eur(s.grossRate) : "—"}</td>
-                    <td className="muted">{ph != null && s.grossRate ? `~${eur(ph * s.grossRate)}` : "—"}</td>
-                    <td className="muted">—</td><td className="muted">—</td><td className="muted">—</td>
-                    <td className="muted">—</td><td className="muted">—</td>
-                    <td>{e.workingDays}</td>
-                  </>
-                ) : (
-                  <>
-                    <td>{s.actualHours?.toFixed(1) ?? "—"}</td>
-                    <td className="muted">{s.grossRate ? eur(s.grossRate) : "—"}</td>
-                    <td>{eur(e.grossPay)}</td>
-                    <td>{eur(e.netPay)}</td>
-                    <td className="muted">{eur(s.tips ?? 0)}</td>
-                    <td>{eur(e.usableTips)}</td>
-                    <td className="pos">{eur(e.takeHome)}</td>
-                    <td className="muted">{e.tipsPerHour == null ? "—" : eur(e.tipsPerHour)}</td>
-                    <td>{e.workingDays}</td>
-                  </>
-                )}
+                <td>{s.actualHours?.toFixed(1) ?? "—"}</td>
+                <td className="muted">{s.grossRate ? eur(s.grossRate) : "—"}</td>
+                <td>{eur(e.grossPay)}</td>
+                <td>{eur(e.netPay)}</td>
+                <td className="muted">{eur(s.tips ?? 0)}</td>
+                <td>{eur(e.usableTips)}</td>
+                <td className="pos">{eur(e.takeHome)}</td>
+                <td className="muted">{e.tipsPerHour == null ? "—" : eur(e.tipsPerHour)}</td>
+                <td>{e.workingDays}</td>
               </tr>
             );
           })}

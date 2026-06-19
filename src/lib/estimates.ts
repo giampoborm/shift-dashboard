@@ -178,7 +178,9 @@ export function estimateShift(
 export interface EstimateTotals {
   shifts: number;
   hours: number;
+  grossWage: number; // Σ hours × rate (deterministic, like the worked gross)
   netWage: number;
+  usableTips: Range; // Σ tip ranges after the pool cut
   takeHome: Range;
 }
 
@@ -194,14 +196,20 @@ export function sumEstimates(
   const t: EstimateTotals = {
     shifts: 0,
     hours: 0,
+    grossWage: 0,
     netWage: 0,
+    usableTips: { p25: 0, median: 0, p75: 0 },
     takeHome: { p25: 0, median: 0, p75: 0 },
   };
   for (const s of planned) {
     const e = estimateShift(s, worked, rates, payslips, settings, stats);
     t.shifts += 1;
     t.hours += e.hours;
+    t.grossWage += e.hours * e.rate;
     t.netWage += e.netWage;
+    t.usableTips.p25 += e.usableTips.p25;
+    t.usableTips.median += e.usableTips.median;
+    t.usableTips.p75 += e.usableTips.p75;
     t.takeHome.p25 += e.takeHome.p25;
     t.takeHome.median += e.takeHome.median;
     t.takeHome.p75 += e.takeHome.p75;

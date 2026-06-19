@@ -89,5 +89,8 @@ describe("sumEstimates", () => {
     const t = sumEstimates(planned, w, DEFAULT_RATES, DEFAULT_PAYSLIPS, settings);
     expect(t.shifts).toBe(3);
     expect(t.takeHome.p25).toBeLessThanOrEqual(t.takeHome.p75);
+    // take-home = net wage + usable tips, per category, at the median.
+    expect(t.takeHome.median).toBeCloseTo(t.netWage + t.usableTips.median, 6);
+    expect(t.grossWage).toBeGreaterThan(0);
   });
 });

@@ -35,9 +35,18 @@ export function Calendar(props: {
   payslips: Payslip[];
   onEditShift: (s: Shift) => void;
   onAddShift: (dateIso: string) => void;
+  /** Controlled month cursor — when supplied (Home owns the period), the calendar
+   *  reflects it and reports changes via onCursorChange instead of local state. */
+  cursor?: Date;
+  onCursorChange?: (d: Date) => void;
+  /** Hide the calendar's own ‹ › nav when an outer stepper already owns the month. */
+  hideNav?: boolean;
 }) {
   const { shifts, worked, settings, rates, payslips, onEditShift, onAddShift } = props;
-  const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
+  const [localCursor, setLocalCursor] = useState(() => startOfMonth(new Date()));
+  const cursor = props.cursor ?? localCursor;
+  const setCursor = (d: Date) =>
+    props.onCursorChange ? props.onCursorChange(d) : setLocalCursor(d);
 
   const byDate = useMemo(() => {
     const m = new Map<string, Shift[]>();
@@ -65,12 +74,14 @@ export function Calendar(props: {
 
   return (
     <div className="calendar">
-      <div className="cal-nav">
-        <button onClick={() => setCursor(addMonths(cursor, -1))}>‹</button>
-        <strong>{format(cursor, "MMMM yyyy")}</strong>
-        <button onClick={() => setCursor(addMonths(cursor, 1))}>›</button>
-        <button onClick={() => setCursor(startOfMonth(new Date()))}>Today</button>
-      </div>
+      {!props.hideNav && (
+        <div className="cal-nav">
+          <button onClick={() => setCursor(addMonths(cursor, -1))}>‹</button>
+          <strong>{format(cursor, "MMMM yyyy")}</strong>
+          <button onClick={() => setCursor(addMonths(cursor, 1))}>›</button>
+          <button onClick={() => setCursor(startOfMonth(new Date()))}>Today</button>
+        </div>
+      )}
 
       <div className="cal-grid">
         {WEEK_HEADERS.map((d) => (

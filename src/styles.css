@@ -70,6 +70,33 @@ button:disabled { opacity: 0.5; cursor: default; }
 .tab { background: transparent; border: 1px solid var(--border); }
 .tab.active { background: var(--panel-2); border-color: var(--accent); color: var(--accent); font-weight: 600; }
 
+/* Redesign skeleton: 3-room shell. Structural only — styling comes later. */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+.topbar h1 { margin: 0; }
+.topbar .rooms { display: flex; gap: 0.4rem; }
+.topbar-actions { display: flex; gap: 0.4rem; margin-left: auto; }
+
+.room { display: flex; flex-direction: column; gap: 1.25rem; }
+.month-nav, .range-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.month-nav strong { min-width: 9rem; text-align: center; }
+
+.next-shift { cursor: pointer; max-width: 22rem; }
+.next-shift:hover { border-color: var(--accent); }
+
+.card.hero .value { font-size: 2.4rem; font-weight: 700; line-height: 1.1; }
+.card.hero { padding: 1rem 1.1rem; }
+
 .warnings {
   background: rgba(251, 191, 36, 0.08);
   border: 1px solid var(--warn);
