@@ -266,6 +266,22 @@ function Home(props: {
 
   const next = useMemo(() => nextShiftFrom(allShifts, new Date()), [allShifts]);
 
+  // Money for the next shift: worked → actuals (point), else estimated ranges.
+  const nextMoney = useMemo(() => {
+    if (!next) return null;
+    if (next.status === "worked") {
+      const e = computeShiftEarnings(next, rates, payslips, settings);
+      return { takeHome: eur0(e.takeHome), tips: eur0(e.usableTips), estimated: false, confident: true };
+    }
+    const est = estimateShift(next, worked, rates, payslips, settings);
+    return {
+      takeHome: eurRange(est.takeHome),
+      tips: eurRange(est.usableTips),
+      estimated: true,
+      confident: est.confident,
+    };
+  }, [next, worked, rates, payslips, settings]);
+
   const month = useMemo(() => {
     const inMonth = shiftsInMonth(allShifts, cursor);
     const workedM = inMonth.filter((s) => s.status === "worked");
@@ -297,6 +313,25 @@ function Home(props: {
             {next.plannedStart ? ` · ${next.plannedStart}–${next.openEnd ? "Ende" : next.plannedEnd ?? "?"}` : ""}
             {next.status !== "planned" ? ` · ${next.status}` : ""}
           </div>
+          {nextMoney && (
+            <div className="next-est">
+              <div className="stat">
+                <span className="k">Take-home</span>
+                <span className="v pos">
+                  {nextMoney.estimated ? "~" : ""}{nextMoney.takeHome}
+                </span>
+              </div>
+              <div className="stat">
+                <span className="k">Tips</span>
+                <span className="v">
+                  {nextMoney.estimated ? "~" : ""}{nextMoney.tips}
+                </span>
+              </div>
+              {nextMoney.estimated && !nextMoney.confident && (
+                <span className="muted" style={{ fontSize: "0.68rem" }}>thin history</span>
+              )}
+            </div>
+          )}
         </div>
       )}
 

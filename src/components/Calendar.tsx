@@ -60,16 +60,22 @@ export function Calendar(props: {
     return eachDayOfInterval({ start, end });
   }, [cursor]);
 
-  function dayTotal(list: Shift[]): number {
-    let t = 0;
+  // Per-day take-home and the tip slice of it (worked actuals, else estimated median).
+  function dayMoney(list: Shift[]): { takeHome: number; tips: number } {
+    let takeHome = 0;
+    let tips = 0;
     for (const s of list) {
       if (s.status === "worked") {
-        t += computeShiftEarnings(s, rates, payslips, settings).takeHome;
+        const e = computeShiftEarnings(s, rates, payslips, settings);
+        takeHome += e.takeHome;
+        tips += e.usableTips;
       } else if (s.status === "planned" || s.status === "swapped-in") {
-        t += estimateShift(s, worked, rates, payslips, settings).takeHome.median;
+        const est = estimateShift(s, worked, rates, payslips, settings);
+        takeHome += est.takeHome.median;
+        tips += est.usableTips.median;
       }
     }
-    return t;
+    return { takeHome, tips };
   }
 
   return (
@@ -90,7 +96,7 @@ export function Calendar(props: {
         {days.map((d) => {
           const iso = format(d, "yyyy-MM-dd");
           const list = byDate.get(iso) ?? [];
-          const total = dayTotal(list);
+          const money = dayMoney(list);
           const out = !isSameMonth(d, cursor);
           return (
             <div
@@ -113,13 +119,18 @@ export function Calendar(props: {
                   {s.plannedStart ?? "?"} {TYPE_SHORT[s.shiftType] ?? s.shiftType}
                 </button>
               ))}
-              {total > 0 && <div className="cal-total">€{Math.round(total)}</div>}
+              {money.takeHome > 0 && (
+                <div className="cal-total">€{Math.round(money.takeHome)}</div>
+              )}
+              {money.tips > 0 && (
+                <div className="cal-tip">tips €{Math.round(money.tips)}</div>
+              )}
             </div>
           );
         })}
       </div>
       <p className="muted" style={{ fontSize: "0.76rem" }}>
-        Solid chip = worked · outlined = planned · struck = swapped. Day total: worked take-home, else estimated median.
+        Solid chip = worked · outlined = planned · struck = swapped. Day total = take-home (worked actuals, else estimated median); <em>tips</em> is the tip slice of it.
       </p>
     </div>
   );
