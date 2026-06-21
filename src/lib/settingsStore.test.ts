@@ -16,6 +16,7 @@ const GOOD_SETTINGS: Settings = {
   tipPoolRate: 0.05,
   closingTime: "01:00",
   vacationWerktage: 24,
+  recencyHalfLifeDays: 45,
 };
 
 describe("parseNum", () => {
@@ -43,6 +44,10 @@ describe("validateSettings", () => {
   });
   it("rejects non-positive Werktage", () => {
     expect(validateSettings({ ...GOOD_SETTINGS, vacationWerktage: 0 })).toHaveLength(1);
+  });
+  it("accepts 0 recency half-life but rejects negatives", () => {
+    expect(validateSettings({ ...GOOD_SETTINGS, recencyHalfLifeDays: 0 })).toEqual([]);
+    expect(validateSettings({ ...GOOD_SETTINGS, recencyHalfLifeDays: -5 })).toHaveLength(1);
   });
 });
 

@@ -70,6 +70,7 @@ export interface Settings {
   tipPoolRate: number; // fraction cut for the prep shift, default 0.05
   closingTime: string; // "HH:mm" used when a slot ends in "Ende"
   vacationWerktage: number; // annual entitlement in Werktage (contract §8 = 24)
+  recencyHalfLifeDays: number; // tip-estimate recency half-life in days (0 = weight all history equally)
 }
 
 /** Earnings derived for a single shift. Never persisted — computed on demand. */

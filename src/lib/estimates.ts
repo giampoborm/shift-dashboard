@@ -8,6 +8,12 @@
 //
 // Each estimate is a range: p25 / median / p75 of reported tips in the bucket.
 // Thin buckets fall back to the family-wide pool, then to all worked shifts.
+//
+// Recency: tips drift over time (the user's evening median fell month-on-month),
+// so each historical shift is weighted by exponential decay on its age — a
+// configurable half-life (Settings.recencyHalfLifeDays). Recent shifts dominate
+// the quantiles; old ones fade but are never deleted. Half-life 0 = equal weights
+// (the original behaviour), which keeps every existing call/test unchanged.
 
 import type { GrossRate, Payslip, Settings, Shift } from "./types";
 import { familyOf, weekdayIndexOf } from "./shiftTime";
@@ -58,6 +64,60 @@ export function quantile(sorted: number[], q: number): number {
 function rangeOf(values: number[]): Range {
   const s = [...values].sort((a, b) => a - b);
   return { p25: quantile(s, 0.25), median: quantile(s, 0.5), p75: quantile(s, 0.75) };
+}
+
+/** Today as "yyyy-MM-dd" — the default reference point for recency. */
+const todayISO = (): string => new Date().toISOString().slice(0, 10);
+
+/**
+ * Exponential recency weight: 1.0 for a shift on `asOf`, halving every
+ * `halfLifeDays`. halfLifeDays <= 0 disables weighting (returns 1). Shifts dated
+ * on/after `asOf` get full weight (no up-weighting of the future).
+ */
+export function recencyWeight(shiftDate: string, asOf: string, halfLifeDays: number): number {
+  if (!(halfLifeDays > 0)) return 1;
+  const ageDays = (Date.parse(asOf) - Date.parse(shiftDate)) / 86_400_000;
+  if (!(ageDays > 0)) return 1;
+  return Math.pow(0.5, ageDays / halfLifeDays);
+}
+
+/**
+ * Weighted, linearly-interpolated quantile (midpoint plotting position). With
+ * equal weights this matches the median of `quantile`; with decaying weights the
+ * quantile slides toward the more recent values. Degenerate weights (all ≤ 0)
+ * fall back to the unweighted quantile so we never return 0 spuriously.
+ */
+export function weightedQuantile(pairs: { value: number; weight: number }[], q: number): number {
+  const s = pairs.filter((p) => p.weight > 0).sort((a, b) => a.value - b.value);
+  if (s.length === 0) return quantile([...pairs.map((p) => p.value)].sort((a, b) => a - b), q);
+  if (s.length === 1) return s[0].value;
+  const total = s.reduce((acc, p) => acc + p.weight, 0);
+  const pos: number[] = [];
+  let cum = 0;
+  for (const p of s) {
+    pos.push((cum + p.weight / 2) / total); // midpoint of this sample's weight mass
+    cum += p.weight;
+  }
+  if (q <= pos[0]) return s[0].value;
+  if (q >= pos[pos.length - 1]) return s[s.length - 1].value;
+  let k = 0;
+  while (k < pos.length - 1 && pos[k + 1] < q) k++;
+  const t = (q - pos[k]) / (pos[k + 1] - pos[k]);
+  return s[k].value + (s[k + 1].value - s[k].value) * t;
+}
+
+/** Tip range for a sample, recency-weighted when halfLifeDays > 0. */
+function tipRangeFor(sample: Shift[], asOf: string, halfLifeDays: number): Range {
+  if (!(halfLifeDays > 0)) return rangeOf(sample.map((s) => s.tips ?? 0));
+  const pairs = sample.map((s) => ({
+    value: s.tips ?? 0,
+    weight: recencyWeight(s.date, asOf, halfLifeDays),
+  }));
+  return {
+    p25: weightedQuantile(pairs, 0.25),
+    median: weightedQuantile(pairs, 0.5),
+    p75: weightedQuantile(pairs, 0.75),
+  };
 }
 
 export interface BucketStats {
@@ -113,11 +173,17 @@ export function estimateShift(
   worked: Shift[],
   rates: GrossRate[],
   payslips: Payslip[],
-  settings: Pick<Settings, "tipPoolRate" | "closingTime">,
+  settings: Pick<Settings, "tipPoolRate" | "closingTime"> & { recencyHalfLifeDays?: number },
   stats?: Map<EstimateBucket, BucketStats>,
+  asOf: string = todayISO(),
 ): ShiftEstimate {
   const bucketStats = stats ?? buildBucketStats(worked);
   const bucket = bucketOf(shift);
+  // Fall back to 0 (= equal weights) only if the field is genuinely absent. The
+  // real default (45) lives in DEFAULT_SETTINGS and is back-filled by getSettings,
+  // which every in-app read goes through — so this branch is the conservative
+  // "off" path for ad-hoc callers, never the live app's normal case.
+  const halfLife = settings.recencyHalfLifeDays ?? 0;
 
   // Tip range with fallback chain: bucket -> same family -> all worked.
   let basis: ShiftEstimate["basis"] = "bucket";
@@ -137,7 +203,7 @@ export function estimateShift(
       basis = "all";
     }
   }
-  const tipRange = rangeOf(sample.map((s) => s.tips ?? 0));
+  const tipRange = tipRangeFor(sample, asOf, halfLife);
 
   const hours =
     shift.actualHours ??
@@ -180,39 +246,54 @@ export interface EstimateTotals {
   hours: number;
   grossWage: number; // Σ hours × rate (deterministic, like the worked gross)
   netWage: number;
-  usableTips: Range; // Σ tip ranges after the pool cut
+  usableTips: Range; // monthly tip band: Σ medians ± quadrature spread
   takeHome: Range;
 }
 
-/** Sum estimates across a set of planned shifts. */
+/**
+ * Sum estimates across a set of planned shifts.
+ *
+ * The centre (median) is the sum of per-shift medians. The p25/p75 band, though,
+ * is NOT the sum of per-shift p25s/p75s — that would assume every shift lands at
+ * its 25th (or 75th) percentile on the same night, hugely overstating the spread
+ * of a monthly total. Tip nights are roughly independent, so their variances add
+ * and the band grows like √n, not n. We combine the half-widths in quadrature
+ * (upper and lower separately, to keep each shift's skew), which is the standard
+ * error-propagation result and cancels any normal-distribution constant.
+ */
 export function sumEstimates(
   planned: Shift[],
   worked: Shift[],
   rates: GrossRate[],
   payslips: Payslip[],
-  settings: Pick<Settings, "tipPoolRate" | "closingTime">,
+  settings: Pick<Settings, "tipPoolRate" | "closingTime"> & { recencyHalfLifeDays?: number },
+  asOf: string = todayISO(),
 ): EstimateTotals {
   const stats = buildBucketStats(worked);
-  const t: EstimateTotals = {
-    shifts: 0,
-    hours: 0,
-    grossWage: 0,
-    netWage: 0,
-    usableTips: { p25: 0, median: 0, p75: 0 },
-    takeHome: { p25: 0, median: 0, p75: 0 },
-  };
+  let shifts = 0;
+  let hours = 0;
+  let grossWage = 0;
+  let netWage = 0;
+  let tipMedian = 0;
+  let lowerVar = 0; // Σ (median − p25)²  — squared lower half-widths
+  let upperVar = 0; // Σ (p75 − median)²  — squared upper half-widths
   for (const s of planned) {
-    const e = estimateShift(s, worked, rates, payslips, settings, stats);
-    t.shifts += 1;
-    t.hours += e.hours;
-    t.grossWage += e.hours * e.rate;
-    t.netWage += e.netWage;
-    t.usableTips.p25 += e.usableTips.p25;
-    t.usableTips.median += e.usableTips.median;
-    t.usableTips.p75 += e.usableTips.p75;
-    t.takeHome.p25 += e.takeHome.p25;
-    t.takeHome.median += e.takeHome.median;
-    t.takeHome.p75 += e.takeHome.p75;
+    const e = estimateShift(s, worked, rates, payslips, settings, stats, asOf);
+    shifts += 1;
+    hours += e.hours;
+    grossWage += e.hours * e.rate;
+    netWage += e.netWage;
+    tipMedian += e.usableTips.median;
+    lowerVar += (e.usableTips.median - e.usableTips.p25) ** 2;
+    upperVar += (e.usableTips.p75 - e.usableTips.median) ** 2;
   }
-  return t;
+  const tipLow = Math.max(0, tipMedian - Math.sqrt(lowerVar)); // tips never go negative
+  const tipHigh = tipMedian + Math.sqrt(upperVar);
+  const usableTips: Range = { p25: tipLow, median: tipMedian, p75: tipHigh };
+  const takeHome: Range = {
+    p25: netWage + tipLow,
+    median: netWage + tipMedian,
+    p75: netWage + tipHigh,
+  };
+  return { shifts, hours, grossWage, netWage, usableTips, takeHome };
 }

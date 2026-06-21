@@ -5,7 +5,9 @@ import {
   buildBucketStats,
   estimateShift,
   quantile,
+  recencyWeight,
   sumEstimates,
+  weightedQuantile,
 } from "./estimates";
 import { importHistoryCsv } from "./importHistory";
 import { DEFAULT_PAYSLIPS, DEFAULT_RATES, DEFAULT_SETTINGS } from "./db";
@@ -23,6 +25,37 @@ describe("quantile", () => {
     expect(quantile([1, 2, 3, 4], 0.5)).toBeCloseTo(2.5);
     expect(quantile([10], 0.25)).toBe(10);
     expect(quantile([], 0.5)).toBe(0);
+  });
+});
+
+describe("recencyWeight", () => {
+  it("is 1 today, halves each half-life, and disables at half-life <= 0", () => {
+    expect(recencyWeight("2026-06-21", "2026-06-21", 30)).toBeCloseTo(1);
+    expect(recencyWeight("2026-05-22", "2026-06-21", 30)).toBeCloseTo(0.5); // ~30d old
+    expect(recencyWeight("2026-04-22", "2026-06-21", 30)).toBeCloseTo(0.25); // ~60d old
+    expect(recencyWeight("2026-01-01", "2026-06-21", 0)).toBe(1); // weighting off
+    expect(recencyWeight("2026-07-01", "2026-06-21", 30)).toBe(1); // future => full weight
+  });
+});
+
+describe("weightedQuantile", () => {
+  it("matches the interpolating median when weights are equal", () => {
+    const eq = [1, 2, 3, 4].map((v) => ({ value: v, weight: 1 }));
+    expect(weightedQuantile(eq, 0.5)).toBeCloseTo(2.5);
+  });
+  it("slides toward the heavily-weighted values", () => {
+    // low values weak, high values strong => median pulled up vs the plain 2.5
+    const pairs = [
+      { value: 1, weight: 0.1 },
+      { value: 2, weight: 0.1 },
+      { value: 3, weight: 1 },
+      { value: 4, weight: 1 },
+    ];
+    expect(weightedQuantile(pairs, 0.5)).toBeGreaterThan(2.5);
+  });
+  it("falls back to unweighted when all weights are zero", () => {
+    const z = [10, 20, 30].map((v) => ({ value: v, weight: 0 }));
+    expect(weightedQuantile(z, 0.5)).toBeCloseTo(20);
   });
 });
 
@@ -80,6 +113,28 @@ describe("estimateShift", () => {
     expect(e.takeHome.median).toBeLessThanOrEqual(e.takeHome.p75);
     expect(e.takeHome.p25).toBeGreaterThan(e.netWage); // tips add on top
   });
+
+  it("recency weighting lowers the evening tip estimate when tips have drifted down", () => {
+    const w = worked();
+    const planned: Shift = {
+      date: "2026-07-03", // future Friday evening
+      station: "BAR",
+      shiftType: "closing",
+      plannedStart: "18:00",
+      plannedEnd: undefined,
+      openEnd: true,
+      crossesMidnight: true,
+      status: "planned",
+      grossRate: 15.5,
+      source: "test",
+      createdAt: "now",
+    };
+    const asOf = "2026-06-21";
+    const flat = estimateShift(planned, w, DEFAULT_RATES, DEFAULT_PAYSLIPS, { ...settings, recencyHalfLifeDays: 0 }, undefined, asOf);
+    const recent = estimateShift(planned, w, DEFAULT_RATES, DEFAULT_PAYSLIPS, { ...settings, recencyHalfLifeDays: 30 }, undefined, asOf);
+    expect(recent.usableTips.median).toBeLessThan(flat.usableTips.median);
+    expect(recent.usableTips.p25).toBeLessThanOrEqual(recent.usableTips.p75); // still ordered
+  });
 });
 
 describe("sumEstimates", () => {
@@ -92,5 +147,35 @@ describe("sumEstimates", () => {
     // take-home = net wage + usable tips, per category, at the median.
     expect(t.takeHome.median).toBeCloseTo(t.netWage + t.usableTips.median, 6);
     expect(t.grossWage).toBeGreaterThan(0);
+  });
+
+  it("combines the band in quadrature, not linearly (band grows ~√n, not n)", () => {
+    const w = worked();
+    const one: Shift = {
+      date: "2026-07-03",
+      station: "BAR",
+      shiftType: "closing",
+      plannedStart: "18:00",
+      plannedEnd: undefined,
+      openEnd: true,
+      crossesMidnight: true,
+      status: "planned",
+      grossRate: 15.5,
+      source: "test",
+      createdAt: "now",
+    };
+    const asOf = "2026-06-21";
+    const single = estimateShift(one, w, DEFAULT_RATES, DEFAULT_PAYSLIPS, settings, undefined, asOf);
+    const perShiftHalfBand = (single.usableTips.p75 - single.usableTips.p25) / 2;
+
+    const n = 9;
+    const planned = Array.from({ length: n }, () => ({ ...one }));
+    const t = sumEstimates(planned, w, DEFAULT_RATES, DEFAULT_PAYSLIPS, settings, asOf);
+    const totalHalfBand = (t.usableTips.p75 - t.usableTips.p25) / 2;
+
+    // Linear (buggy) summing would give n× the per-shift half-band; quadrature gives ~√n×.
+    expect(totalHalfBand).toBeLessThan(perShiftHalfBand * n * 0.6); // far below the linear sum
+    expect(totalHalfBand).toBeCloseTo(perShiftHalfBand * Math.sqrt(n), 4); // √n scaling
+    expect(t.usableTips.p25).toBeGreaterThanOrEqual(0); // tips never negative
   });
 });

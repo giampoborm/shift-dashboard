@@ -10,6 +10,7 @@ export const DEFAULT_SETTINGS: Settings = {
   tipPoolRate: 0.05,
   closingTime: "01:00",
   vacationWerktage: 24, // contract §8
+  recencyHalfLifeDays: 45, // recent shifts dominate tip estimates; old data fades, never deleted
 };
 
 // Effective-dated gross rate table grounded in the payslips:
@@ -64,5 +65,7 @@ export async function ensureSeeded(): Promise<void> {
 }
 
 export async function getSettings(): Promise<Settings> {
-  return (await db.settings.get(1)) ?? DEFAULT_SETTINGS;
+  // Merge over defaults so settings persisted before a new field existed
+  // (e.g. recencyHalfLifeDays on the live install) still get a sane value.
+  return { ...DEFAULT_SETTINGS, ...(await db.settings.get(1)) };
 }

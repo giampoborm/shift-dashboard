@@ -55,6 +55,7 @@ function GeneralSection(props: { settings: SettingsT; onSaved: (s: SettingsT) =>
   const [tipPct, setTipPct] = useState(String(Math.round(s.tipPoolRate * 1000) / 10)); // % form
   const [closingTime, setClosingTime] = useState(s.closingTime);
   const [werktage, setWerktage] = useState(String(s.vacationWerktage));
+  const [halfLife, setHalfLife] = useState(String(s.recencyHalfLifeDays));
   const [errors, setErrors] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
 
@@ -62,12 +63,14 @@ function GeneralSection(props: { settings: SettingsT; onSaved: (s: SettingsT) =>
     setSaved(false);
     const pct = parseNum(tipPct);
     const wt = parseNum(werktage);
+    const hl = parseNum(halfLife);
     const next: SettingsT = {
       ...s,
       userName: userName.trim(),
       tipPoolRate: pct == null ? NaN : pct / 100,
       closingTime: closingTime,
       vacationWerktage: wt == null ? NaN : wt,
+      recencyHalfLifeDays: hl == null ? NaN : hl,
     };
     const errs = validateSettings(next);
     setErrors(errs);
@@ -81,7 +84,7 @@ function GeneralSection(props: { settings: SettingsT; onSaved: (s: SettingsT) =>
   return (
     <section>
       <h3>General</h3>
-      <p className="hint">Identity, the tip-pool cut, the closing time used when a slot says “Ende”, and the annual vacation entitlement.</p>
+      <p className="hint">Identity, the tip-pool cut, the closing time used when a slot says “Ende”, the annual vacation entitlement, and how fast old tips fade from estimates.</p>
       <div className="grid">
         <label>Name (in plan files)
           <input value={userName} onChange={(e) => setUserName(e.target.value)} />
@@ -94,6 +97,9 @@ function GeneralSection(props: { settings: SettingsT; onSaved: (s: SettingsT) =>
         </label>
         <label>Vacation Werktage / year
           <input value={werktage} onChange={(e) => setWerktage(e.target.value)} inputMode="numeric" placeholder="24" />
+        </label>
+        <label>Tip recency half-life (days)
+          <input value={halfLife} onChange={(e) => setHalfLife(e.target.value)} inputMode="numeric" placeholder="45" title="Lower = recent shifts dominate tip estimates. 0 = weight all history equally." />
         </label>
       </div>
       <div className="row-actions" style={{ marginTop: "0.75rem" }}>
