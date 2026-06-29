@@ -367,6 +367,26 @@ button:disabled:hover { background: var(--panel-2); }
 .money-grid .ms-vert .ms-foot .k { font-size: clamp(0.85rem, 3.5vw, 1.25rem); }
 .money-grid .ms-vert .sub        { font-size: clamp(0.8rem, 3vw, 1.05rem); }
 
+/* Desktop: drop the centred typographic grid — just a simple horizontal row of
+   cards, brutto/netto un-rotated. (Mobile keeps the composed layout above.) */
+@media (min-width: 561px) {
+  .money-grid {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: flex-start;
+    width: 100%;
+    margin: 0;
+    column-gap: clamp(1.5rem, 5vw, 3.5rem);
+    row-gap: 1rem;
+  }
+  .mg-left { flex-direction: row; align-items: flex-end; gap: clamp(1.5rem, 5vw, 3.5rem); }
+  .money-grid .ms-hero, .money-grid .ms-mid { align-self: flex-end; }
+  /* un-rotate the brutto/netto card so it sits horizontal like the rest */
+  .money-grid .ms-vert .ms-body { writing-mode: horizontal-tb; transform: none; }
+  .money-grid > .ms-vert { align-self: flex-end; }
+}
+
 .warnings {
   background: #fff7ed;
   border: 1.5px solid var(--warn);
