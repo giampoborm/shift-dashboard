@@ -9,7 +9,9 @@ A local-first personal dashboard for a bar worker to track shifts, tips, and ear
 - **papaparse** (CSV import/export), **date-fns** (dates), **date-holidays** (German public holidays), **Recharts** (charts, in deps — not yet wired up). Calendar is a **custom Monday-start month grid**, not FullCalendar.
 
 ## Status
-In progress — **Phases 1–5 + Tier 1 done** (47 passing tests). **Live at https://shift-dashboard.giampobo.workers.dev/** (Cloudflare Workers Static Assets — see [[deployment]]). Done: data model, both importers, table + rich filtering, CSV export, earnings/stats, 5-type taxonomy + families, estimate engine + Planned/estimates tab, shift editor (post-shift entry / manual add / edit / delete), shift swap, calendar month view, vacation calculator (dual-basis: proportional "shifts you'd miss" + Werktage/24, taken/remaining counters), **Settings panel** (editable rates/payslips/general), **PWA** (installable, offline), **dd.MM.yyyy date display**. `date-holidays` is lazy-loaded (heavy) only on the Vacation tab.
+In progress, **LIVE** at https://shift-dashboard.giampobo.workers.dev/ (Cloudflare Workers Static Assets — see [[deployment]]). Phases 1–5 + Tier 1 + Drive sync + Charts shipped; 47 passing tests.
+
+📋 **Status, roadmap, and decisions live in [`docs/ROADMAP.md`](docs/ROADMAP.md)** — the single source of truth, maintained by the `project-manager` subagent. This `CLAUDE.md` covers *how the code works* (architecture, invariants, conventions); the roadmap covers *what's done / next / why*. Current focus: a **UI/UX redesign** (glance-first + bold visual identity).
 
 ## ⚠ This app is LIVE — push, don't just commit
 The dashboard is deployed and in **daily real use on the user's PC and phone**. Cloudflare Workers **auto-deploys from GitHub `main`** ([[deployment]]), and cross-device data sync runs through the user's own Google Drive ([[sync-approach]]). Consequences for how to work here:
@@ -17,22 +19,8 @@ The dashboard is deployed and in **daily real use on the user's PC and phone**. 
 - This is durable authorization to push on this project (it overrides the global "push only when asked" default) — but only *after* verification passes. Never push a red build or half-finished work to a live, in-use app.
 - The OAuth **client ID is not a secret** (ships in JS, gated by authorized JS origins) — fine to commit. But `data/` (real financial CSVs) is gitignored and **never** committed/published.
 
-## ▶ Start here next (agreed roadmap)
-Tiered by value. **Tier 1 (PWA + Settings + deploy) is DONE** — only the icon PNG is outstanding (user makes it himself → `public/icon-source.png` → `npm run generate-pwa-assets` → push).
-
-**Tier 1 — finish the original promise ✅ DONE**
-1. ~~**PWA install + offline**~~ — done via `vite-plugin-pwa` (manifest + SW, autoUpdate). Icon PNGs still placeholders.
-2. ~~**Settings panel**~~ — done: `src/components/Settings.tsx` + `src/lib/settingsStore.ts`, editable general/rates/payslips, Dexie-backed.
-3. ~~**Deploy**~~ — live on Cloudflare Workers (GitHub auto-deploy). See [[deployment]].
-
-**Tier 1.5 — Google Drive appdata sync ✅ LIVE & WORKING on PC + phone (2026-06-18)** ([[sync-approach]]) — cross-device sync via the user's own Drive `appdata` folder. Whole-file newer-wins + conflict guard; manual "Sync now" + silent pull/push on app open. `src/lib/dbSnapshot.ts` (pure: serialize/hash/`resolveSync`, tested) + `src/lib/driveSync.ts` (GIS token client + Drive REST, no backend → no refresh token) + `src/components/SyncPanel.tsx` (Settings section, in-app client-ID entry + conflict prompt). The user created his Google OAuth client (consent screen in Testing + self as test user, scope `drive.appdata`, Web client with JS origins for the live URL + localhost), pasted the client ID into Settings, and connected both devices. Mobile gotcha: the GIS popup goes blank in the standalone PWA / with iOS cross-site-tracking blocking — Connect from a normal browser tab (robust fix if it recurs: switch GIS to full-page redirect, no backend needed).
-
-**Tier 2 — make the data talk**
-3. **Charts** (recharts already in deps) — tips/hour over time, tips by shift type, earnings by month, night-vs-day.
-4. **Vacation optimizer** — inverse of the calculator: "I want ~7 days off in August → which window costs the fewest scheduled shifts and bridges the most public holidays?" Slide a window, rank by calendar-days-off ÷ shifts-spent, snap to holidays.
-
-**Tier 3 — nice-to-have**
-5. **`.ics` export** (one-way calendar feed) → much later, deferred Google Calendar two-way sync.
+## ▶ Start here next
+See **[`docs/ROADMAP.md`](docs/ROADMAP.md)** for the current focus, what's next, and the decisions log. Ask the `project-manager` subagent for an up-to-date status read.
 
 **Working agreement:** deliver verified work in substantial chunks, not step-by-step approval ([[autonomous-momentum]]); still surface real decisions. Run `/verify` after a chunk; consider the `shift-reviewer` subagent before declaring a feature done.
 
