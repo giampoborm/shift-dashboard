@@ -18,7 +18,7 @@ import { computeShiftEarnings } from "../lib/earnings";
 import { estimateShift } from "../lib/estimates";
 import type { GrossRate, Payslip, Settings, Shift } from "../lib/types";
 
-const WEEK_HEADERS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const WEEK_HEADERS = ["M", "T", "W", "T", "F", "S", "S"];
 const TYPE_SHORT: Record<string, string> = {
   opening: "open",
   "late-morning": "l.morn",
@@ -90,8 +90,8 @@ export function Calendar(props: {
       )}
 
       <div className="cal-grid">
-        {WEEK_HEADERS.map((d) => (
-          <div key={d} className="cal-head">{d}</div>
+        {WEEK_HEADERS.map((d, i) => (
+          <div key={i} className="cal-head">{d}</div>
         ))}
         {days.map((d) => {
           const iso = format(d, "yyyy-MM-dd");

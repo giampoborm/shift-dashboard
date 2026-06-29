@@ -6,7 +6,7 @@ import { importHistoryCsv, type ImportWarning } from "./lib/importHistory";
 import { importPlanCsv, plannedHours } from "./lib/importPlan";
 import { computeShiftEarnings, sumEarnings } from "./lib/earnings";
 import { weekdayOf } from "./lib/shiftTime";
-import { formatDate } from "./lib/format";
+import { formatDate, formatDateShort } from "./lib/format";
 import { shiftsToCsv, downloadText } from "./lib/exportCsv";
 import { estimateShift, sumEstimates, type Range } from "./lib/estimates";
 import { nextShiftFrom, shiftsInMonth } from "./lib/period";
@@ -26,6 +26,17 @@ const Charts = lazy(() => import("./components/Charts").then((m) => ({ default: 
 const eur = (n: number) => `€${n.toFixed(2)}`;
 const eur0 = (n: number) => `€${Math.round(n)}`;
 const eurRange = (r: Range) => `€${Math.round(r.p25)}–${Math.round(r.p75)}`;
+
+// Banked-vs-projected breakdown as a bare "1304 + 433" (no € — the figure above
+// already carries it). Single-sided when only one part is present.
+function breakdownText(m: { banked: number; projected: number }): string {
+  const b = m.banked > 0.5;
+  const p = m.projected > 0.5;
+  const r = (n: number) => `${Math.round(n)}`;
+  if (b && p) return `${r(m.banked)} + ${r(m.projected)}`;
+  if (p) return `${r(m.projected)}`;
+  return `${r(m.banked)}`;
+}
 
 const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SHIFT_TYPES: ShiftType[] = ["opening", "late-morning", "mid-day", "early-closing", "closing"];
@@ -164,16 +175,6 @@ export function App() {
             </button>
           ))}
         </nav>
-        <div className="topbar-actions">
-          <button className="primary" onClick={() => setEditor({ shift: null })}>+ Log</button>
-          <button
-            className={`tab ${room === "settings" ? "active" : ""}`}
-            onClick={() => setRoom("settings")}
-            title="Settings"
-          >
-            ⚙
-          </button>
-        </div>
       </header>
 
       {syncMsg && (
@@ -194,6 +195,8 @@ export function App() {
           payslips={payslips!}
           onEditShift={(s) => setEditor({ shift: s })}
           onAddShift={(date) => setEditor({ shift: null, prefill: { date } })}
+          onNewShift={() => setEditor({ shift: null })}
+          onOpenSettings={() => setRoom("settings")}
         />
       ) : room === "analysis" ? (
         <Analysis
@@ -260,9 +263,14 @@ function Home(props: {
   payslips: Payslip[];
   onEditShift: (s: Shift) => void;
   onAddShift: (dateIso: string) => void;
+  onNewShift: () => void;
+  onOpenSettings: () => void;
 }) {
-  const { allShifts, worked, settings, rates, payslips, onEditShift, onAddShift } = props;
+  const { allShifts, worked, settings, rates, payslips, onEditShift, onAddShift,
+    onNewShift, onOpenSettings } = props;
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
+  // brutto/netto share one card; tapping it toggles which is shown.
+  const [sideView, setSideView] = useState<"brutto" | "netto">("brutto");
 
   const next = useMemo(() => nextShiftFrom(allShifts, new Date()), [allShifts]);
 
@@ -302,52 +310,67 @@ function Home(props: {
 
   return (
     <div className="room home">
-      {next && (
-        <div className="next-shift card" onClick={() => onEditShift(next)} role="button">
-          <div className="label">Next shift</div>
-          <div className="value">
-            {weekdayOf(next.date).slice(0, 3)} {formatDate(next.date)}
-          </div>
-          <div className="sub">
-            {next.station} · {next.shiftType}
-            {next.plannedStart ? ` · ${next.plannedStart}–${next.openEnd ? "Ende" : next.plannedEnd ?? "?"}` : ""}
-            {next.status !== "planned" ? ` · ${next.status}` : ""}
-          </div>
-          {nextMoney && (
-            <div className="next-est">
-              <div className="stat">
-                <span className="k">Take-home</span>
-                <span className="v pos">
-                  {nextMoney.estimated ? "~" : ""}{nextMoney.takeHome}
-                </span>
+      {/* Hero: next-shift arrow → red log dot → this month's take-home. */}
+      <div className="home-hero">
+        {next ? (
+          <>
+            <div className="next-arrow" onClick={() => onEditShift(next)} role="button"
+              title="View this shift">
+              <div className="inner">
+                <div className="na-line">
+                  Next: {weekdayOf(next.date).slice(0, 3)} {formatDateShort(next.date)}
+                  {next.plannedStart ? ` ${next.plannedStart}–${next.openEnd ? "Ende" : next.plannedEnd ?? "?"}` : ""}
+                </div>
+                <div className="na-sub">
+                  {next.station} · {next.shiftType}
+                  {next.status !== "planned" ? ` · ${next.status}` : ""}
+                </div>
+                {nextMoney && (
+                  <div className="na-money">
+                    <span><span className="k">take home </span>
+                      <span className="v">{nextMoney.estimated ? "~" : ""}{nextMoney.takeHome}</span></span>
+                    <span><span className="k">tips </span>
+                      <span className="v">{nextMoney.estimated ? "~" : ""}{nextMoney.tips}</span></span>
+                  </div>
+                )}
               </div>
-              <div className="stat">
-                <span className="k">Tips</span>
-                <span className="v">
-                  {nextMoney.estimated ? "~" : ""}{nextMoney.tips}
-                </span>
-              </div>
-              {nextMoney.estimated && !nextMoney.confident && (
-                <span className="muted" style={{ fontSize: "0.68rem" }}>thin history</span>
-              )}
             </div>
-          )}
-        </div>
-      )}
+            <button className="log-dot" onClick={() => onEditShift(next)}
+              title={`Log this shift (${formatDate(next.date)})`} aria-label="Log next shift">
+              done
+            </button>
+          </>
+        ) : (
+          <button className="log-dot" onClick={() => onAddShift(format(new Date(), "yyyy-MM-dd"))}
+            title="Log a shift" aria-label="Log a shift">
+            log
+          </button>
+        )}
+      </div>
 
       <div className="month-nav">
         <button onClick={() => setCursor(addMonths(cursor, -1))}>‹</button>
         <strong>{format(cursor, "MMMM yyyy")}</strong>
         <button onClick={() => setCursor(addMonths(cursor, 1))}>›</button>
-        <button onClick={() => setCursor(startOfMonth(new Date()))}>This month</button>
+        <button onClick={() => setCursor(startOfMonth(new Date()))}>Current</button>
       </div>
 
-      <MoneyCard label="Take-home" money={month.takeHome} hero
-        countSub={`${month.workedCount} worked · ${month.plannedCount} planned`} />
-      <div className="cards">
-        <MoneyCard label="Gross (brutto)" money={month.gross} />
-        <MoneyCard label="Net wage (netto)" money={month.net} />
-        <MoneyCard label="Usable tips" money={month.tips} />
+      {/* Typographic money grid: total + tips stack on the left (packed tight),
+          brutto/netto share one tappable card flush to the right edge — the left
+          block grows to fill, so the group spans the full width. */}
+      <div className="money-grid">
+        <div className="mg-left">
+          <MiniStat label="total" money={month.takeHome} variant="hero" />
+          <MiniStat label="tips" money={month.tips} variant="mid" />
+        </div>
+        <MiniStat
+          label={sideView}
+          money={sideView === "brutto" ? month.gross : month.net}
+          variant="minor"
+          layout="vert"
+          onClick={() => setSideView(sideView === "brutto" ? "netto" : "brutto")}
+          title="Tap to switch brutto / netto"
+        />
       </div>
 
       <Calendar
@@ -362,6 +385,14 @@ function Home(props: {
         onEditShift={onEditShift}
         onAddShift={onAddShift}
       />
+
+      {/* Quiet utilities live at the very bottom, out of the glance path. */}
+      <div className="home-footer-actions">
+        <button className="icon-btn" onClick={onNewShift}
+          title="Log a new shift" aria-label="Log a new shift">+</button>
+        <button className="icon-btn" onClick={onOpenSettings}
+          title="Settings" aria-label="Settings">⚙</button>
+      </div>
     </div>
   );
 }
@@ -520,32 +551,50 @@ function Tools(props: {
   );
 }
 
-// A money figure for the month: total on top, banked/projected breakdown underneath.
-// The breakdown adapts to the month — pure-past = all banked, pure-future = all
-// projected (~), current = a real mix.
-function MoneyCard(props: {
+// A compact month money figure: label + total. A "~" prefix marks a figure that is
+// still partly/fully projected (planned shifts not yet worked) — the verbose
+// banked/projected breakdown is dropped in favour of glance-ability.
+function MiniStat(props: {
   label: string;
   money: { banked: number; projected: number };
-  hero?: boolean;
-  countSub?: string;
+  /** hero = the headline figure, mid = secondary big, minor = de-emphasised. */
+  variant?: "hero" | "mid" | "minor";
+  /** stack = number with label + breakdown beneath it (total/tips); vert = vertical card (toggle). */
+  layout?: "stack" | "vert";
+  /** when set, the card becomes a button (e.g. the brutto/netto toggle). */
+  onClick?: () => void;
+  title?: string;
+  /** hide the banked + projected breakdown line. */
+  showSub?: boolean;
 }) {
   const { banked, projected } = props.money;
   const total = banked + projected;
-  const mixed = banked > 0.5 && projected > 0.5;
-  const breakdown = mixed
-    ? `${eur0(banked)} banked · ~${eur0(projected)} projected`
-    : projected > 0.5
-      ? "all projected"
-      : "all banked";
-  return (
-    <div className={`card${props.hero ? " hero" : ""}`}>
-      <div className="label">{props.label}</div>
-      <div className="value" style={props.hero ? { color: "var(--good)" } : undefined}>
-        {projected > 0.5 && banked <= 0.5 ? "~" : ""}{eur0(total)}
+  // "~" only when the figure is entirely an estimate (nothing banked yet).
+  const approx = banked <= 0.5 && projected > 0.5;
+  const variant = props.variant ?? "mid";
+  const layout = props.layout ?? "stack";
+  const showSub = props.showSub ?? true;
+  const cls = `ms ms-${variant} ms-${layout}`;
+  // Label and breakdown ride together beneath the figure, left-aligned with each other.
+  const inner = (
+    <div className="ms-body">
+      <span className="v">
+        {approx && <span className="approx">~</span>}
+        {eur0(total)}
+      </span>
+      <div className="ms-foot">
+        <span className="k">{props.label}</span>
+        {showSub && <span className="sub">{breakdownText(props.money)}</span>}
       </div>
-      <div className="sub">{breakdown}</div>
-      {props.countSub && <div className="sub">{props.countSub}</div>}
     </div>
+  );
+  return props.onClick ? (
+    <button className={cls} onClick={props.onClick} title={props.title}
+      aria-label={`${props.label} — ${eur0(total)}; tap to switch`}>
+      {inner}
+    </button>
+  ) : (
+    <div className={cls}>{inner}</div>
   );
 }
 
