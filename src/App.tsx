@@ -10,8 +10,10 @@ import { formatDate, formatDateShort } from "./lib/format";
 import { shiftsToCsv, downloadText } from "./lib/exportCsv";
 import { estimateShift, sumEstimates, type Range } from "./lib/estimates";
 import { nextShiftFrom, shiftsInMonth } from "./lib/period";
-import { syncOnOpen } from "./lib/driveSync";
+import { reconcileMonth } from "./lib/reconcile";
+import { isConfigured, sync, syncOnOpen } from "./lib/driveSync";
 import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
+import { ReconcilePopup } from "./components/ReconcilePopup";
 import { Calendar } from "./components/Calendar";
 import { Settings as SettingsPanel } from "./components/Settings";
 import type { GrossRate, Payslip, Settings, Shift, ShiftType } from "./lib/types";
@@ -70,12 +72,37 @@ export function App() {
   const planRef = useRef<HTMLInputElement>(null);
 
   const [syncMsg, setSyncMsg] = useState("");
+  const [syncBusy, setSyncBusy] = useState(false);
 
   function refreshSettings() {
     getSettings().then(setSettings);
   }
 
+  // Manual sync from Home's ⟳ — interactive, so a lapsed Google grant can pop the
+  // consent dialog right there instead of sending the user to Settings.
+  async function syncNow() {
+    if (syncBusy) return;
+    setSyncBusy(true);
+    try {
+      const r = await sync(true);
+      if (r.status === "conflict")
+        setSyncMsg("Sync conflict — open ⚙ Settings to choose which copy to keep.");
+      else if (r.status === "pulled") {
+        refreshSettings();
+        setSyncMsg("Pulled latest from Google Drive ✓");
+      } else if (r.status === "pushed") setSyncMsg("Pushed to Google Drive ✓");
+      else setSyncMsg("Already in sync ✓");
+    } catch (err) {
+      setSyncMsg(`Sync failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSyncBusy(false);
+    }
+  }
+
   useEffect(() => {
+    // Ask the browser never to evict our IndexedDB under storage pressure — on a
+    // device that hasn't connected Drive sync this is the only copy of the data.
+    navigator.storage?.persist?.().catch(() => {});
     ensureSeeded()
       .then(getSettings)
       .then(setSettings)
@@ -197,6 +224,8 @@ export function App() {
           onAddShift={(date) => setEditor({ shift: null, prefill: { date } })}
           onNewShift={() => setEditor({ shift: null })}
           onOpenSettings={() => setRoom("settings")}
+          onSync={isConfigured() ? syncNow : undefined}
+          syncBusy={syncBusy}
         />
       ) : room === "analysis" ? (
         <Analysis
@@ -265,12 +294,15 @@ function Home(props: {
   onAddShift: (dateIso: string) => void;
   onNewShift: () => void;
   onOpenSettings: () => void;
+  onSync?: () => void;
+  syncBusy?: boolean;
 }) {
   const { allShifts, worked, settings, rates, payslips, onEditShift, onAddShift,
-    onNewShift, onOpenSettings } = props;
+    onNewShift, onOpenSettings, onSync, syncBusy } = props;
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
   // brutto/netto share one card; tapping it toggles which is shown.
   const [sideView, setSideView] = useState<"brutto" | "netto">("brutto");
+  const [showRecon, setShowRecon] = useState(false);
 
   const next = useMemo(() => nextShiftFrom(allShifts, new Date()), [allShifts]);
 
@@ -287,23 +319,35 @@ function Home(props: {
     };
   }, [next, worked, rates, payslips, settings]);
 
+  // Logged-vs-payslip check for the viewed month; drives the "!" on the salary card.
+  const recon = useMemo(
+    () => reconcileMonth(format(cursor, "yyyy-MM"), allShifts, rates, payslips),
+    [allShifts, cursor, rates, payslips],
+  );
+
   const month = useMemo(() => {
     const inMonth = shiftsInMonth(allShifts, cursor);
     const workedM = inMonth.filter((s) => s.status === "worked");
     const plannedM = inMonth.filter((s) => s.status === "planned" || s.status === "swapped-in");
     const banked = sumEarnings(workedM, rates, payslips, settings);
     const projected = sumEstimates(plannedM, worked, rates, payslips, settings);
+    // When the user resolved a payslip discrepancy in favour of the slip, the
+    // banked wage part (brutto/netto, and netto's share of take-home) comes from
+    // the payslip instead of the logged hours. Tips are untouched — not on the slip.
+    const slip = recon?.slip.useSlipTotals ? recon.slip : null;
+    const bankedGross = slip ? slip.totalGross : banked.grossPay;
+    const bankedNet = slip ? slip.totalNet : banked.netPay;
     // One row per money category, each split into what's banked (worked actuals) vs
     // projected (planned estimates) — the actual-vs-estimate blend, made visible.
     return {
       workedCount: workedM.length,
       plannedCount: plannedM.length,
-      takeHome: { banked: banked.takeHome, projected: projected.takeHome.median },
-      gross: { banked: banked.grossPay, projected: projected.grossWage },
-      net: { banked: banked.netPay, projected: projected.netWage },
+      takeHome: { banked: bankedNet + banked.usableTips, projected: projected.takeHome.median },
+      gross: { banked: bankedGross, projected: projected.grossWage },
+      net: { banked: bankedNet, projected: projected.netWage },
       tips: { banked: banked.usableTips, projected: projected.usableTips.median },
     };
-  }, [allShifts, cursor, worked, rates, payslips, settings]);
+  }, [allShifts, cursor, worked, rates, payslips, settings, recon]);
 
   return (
     <div className="room home">
@@ -360,15 +404,31 @@ function Home(props: {
           <MiniStat label="total" money={month.takeHome} variant="hero" />
           <MiniStat label="tips" money={month.tips} variant="mid" />
         </div>
-        <MiniStat
-          label={sideView}
-          money={sideView === "brutto" ? month.gross : month.net}
-          variant="minor"
-          layout="vert"
-          onClick={() => setSideView(sideView === "brutto" ? "netto" : "brutto")}
-          title="Tap to switch brutto / netto"
-        />
+        <div className="ms-wrap">
+          <MiniStat
+            label={sideView}
+            money={sideView === "brutto" ? month.gross : month.net}
+            variant="minor"
+            layout="vert"
+            onClick={() => setSideView(sideView === "brutto" ? "netto" : "brutto")}
+            title="Tap to switch brutto / netto"
+          />
+          {recon && (recon.discrepant || recon.slip.useSlipTotals) && (
+            <button
+              className={`recon-badge ${recon.slip.useSlipTotals ? "resolved" : ""}`}
+              onClick={() => setShowRecon(true)}
+              title="Logged shifts and this month's payslip disagree — tap for details"
+              aria-label="Payslip discrepancy details"
+            >
+              !
+            </button>
+          )}
+        </div>
       </div>
+
+      {showRecon && recon && (
+        <ReconcilePopup recon={recon} onClose={() => setShowRecon(false)} />
+      )}
 
       <Calendar
         shifts={allShifts}
@@ -387,6 +447,11 @@ function Home(props: {
       <div className="home-footer-actions">
         <button className="icon-btn" onClick={onNewShift}
           title="Log a new shift" aria-label="Log a new shift">+</button>
+        {onSync && (
+          <button className={`icon-btn ${syncBusy ? "spin" : ""}`} onClick={onSync}
+            disabled={syncBusy} title="Sync with Google Drive"
+            aria-label="Sync with Google Drive">⟳</button>
+        )}
         <button className="icon-btn" onClick={onOpenSettings}
           title="Settings" aria-label="Settings">⚙</button>
       </div>

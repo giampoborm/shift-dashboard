@@ -51,6 +51,9 @@ export interface Payslip {
   totalGross: number; // wage only, excludes tips
   totalHours: number;
   totalNet: number;
+  /** When true, Home shows this slip's brutto/netto for the month instead of the
+      figures derived from logged shifts (the user resolved a discrepancy). */
+  useSlipTotals?: boolean;
 }
 
 /** A recorded vacation period, with its Werktage cost snapshotted at save time. */

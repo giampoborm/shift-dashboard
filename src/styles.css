@@ -328,7 +328,10 @@ button:disabled:hover { background: var(--panel-2); }
   justify-content: center;
   gap: 0.1rem;
 }
-.money-grid > .ms-vert { align-self: stretch; }
+.money-grid > .ms-vert, .money-grid > .ms-wrap { align-self: stretch; }
+/* wrapper that lets the payslip "!" badge sit on the salary card's corner */
+.ms-wrap { position: relative; display: flex; min-width: 0; }
+.ms-wrap > .ms { flex: 1; }
 
 /* shared bits */
 .money-grid .ms { display: flex; min-width: 0; }
@@ -384,8 +387,55 @@ button:disabled:hover { background: var(--panel-2); }
   .money-grid .ms-hero, .money-grid .ms-mid { align-self: flex-end; }
   /* un-rotate the brutto/netto card so it sits horizontal like the rest */
   .money-grid .ms-vert .ms-body { writing-mode: horizontal-tb; transform: none; }
-  .money-grid > .ms-vert { align-self: flex-end; }
+  .money-grid > .ms-vert, .money-grid > .ms-wrap { align-self: flex-end; }
 }
+
+/* ── Payslip reconciliation: red "!" on the salary card + its framed popup ──── */
+.recon-badge {
+  position: absolute; top: -4px; right: -4px; z-index: 5;
+  width: 22px; height: 22px; border-radius: 999px; padding: 0;
+  background: var(--red); color: #fff; border: none;
+  font-size: 0.85rem; font-weight: 800; line-height: 22px; text-align: center;
+}
+.recon-badge:hover { background: var(--red); transform: scale(1.12); }
+.recon-badge.resolved { background: var(--muted); }
+.recon-badge.resolved:hover { background: var(--text); }
+
+/* the popup: same sheet + font, thick black frame, NO dimmed backdrop */
+.recon-pop-wrap {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem;
+}
+.recon-pop {
+  background: #fff;
+  border: 3px solid var(--text);
+  border-radius: 18px;
+  padding: 1.1rem 1.25rem 1.25rem;
+  width: 100%; max-width: 420px;
+}
+.recon-pop h2 { margin: 0 0 0.8rem; font-size: 1.05rem; font-weight: 800; }
+.recon-grid {
+  display: grid; grid-template-columns: auto 1fr 1fr 1fr;
+  gap: 0.3rem 0.8rem;
+  font-size: 0.92rem;
+  margin-bottom: 0.9rem;
+}
+.recon-grid .h {
+  color: var(--muted); font-size: 0.7rem; text-transform: uppercase;
+  letter-spacing: 0.06em; font-weight: 700; text-align: right; align-self: end;
+}
+.recon-grid .k { font-weight: 700; }
+.recon-grid .num { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.recon-grid .delta { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
+.recon-grid .delta.off { color: var(--red); }
+.recon-note { color: var(--muted); font-size: 0.78rem; line-height: 1.45; margin: 0 0 0.9rem; }
+.recon-note strong { color: var(--text); }
+.recon-actions { display: flex; gap: 0.4rem; justify-content: flex-end; flex-wrap: wrap; }
+
+/* the Home ⟳ spins while a manual sync runs */
+.icon-btn.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .warnings {
   background: #fff7ed;

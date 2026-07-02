@@ -287,9 +287,21 @@ export async function syncOnOpen(): Promise<SyncResult | null> {
   if (!isConnected()) return null;
   try {
     return await sync(false);
-  } catch {
-    // lapsed grant / offline — drop the "connected" optimism; Settings will offer reconnect
-    disconnectLocal();
+  } catch (e) {
+    // Drop "connected" only when the GRANT is the problem. A transient failure —
+    // opening the PWA offline, a flaky connection, GIS blocked by an ad-blocker —
+    // must NOT force a manual reconnect; the next open just tries again.
+    if (navigator.onLine && isAuthError(e)) disconnectLocal();
     return null;
   }
+}
+
+/** Errors that mean the Google grant itself has lapsed/been revoked. Deliberately
+    excludes "cancelled": a dismissed consent popup (interactive connect only —
+    can't happen in silent syncOnOpen) is not a revoked grant. */
+function isAuthError(e: unknown): boolean {
+  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return /interaction_required|login_required|access_denied|invalid_grant|expired|sign-in failed/.test(
+    msg,
+  );
 }
