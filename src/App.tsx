@@ -274,13 +274,10 @@ function Home(props: {
 
   const next = useMemo(() => nextShiftFrom(allShifts, new Date()), [allShifts]);
 
-  // Money for the next shift: worked → actuals (point), else estimated ranges.
+  // Money for the next shift — always an estimate range (nextShiftFrom never
+  // returns a worked shift: once logged, the card advances to the following one).
   const nextMoney = useMemo(() => {
     if (!next) return null;
-    if (next.status === "worked") {
-      const e = computeShiftEarnings(next, rates, payslips, settings);
-      return { takeHome: eur0(e.takeHome), tips: eur0(e.usableTips), estimated: false, confident: true };
-    }
     const est = estimateShift(next, worked, rates, payslips, settings);
     return {
       takeHome: eurRange(est.takeHome),

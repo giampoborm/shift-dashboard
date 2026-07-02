@@ -42,14 +42,24 @@ describe("nextShiftFrom", () => {
     expect(nextShiftFrom(list, today)?.date).toBe("2026-06-21");
   });
 
-  it("counts a shift dated today", () => {
+  it("counts a planned shift dated today", () => {
     const list = [mk("2026-06-19"), mk("2026-06-30")];
     expect(nextShiftFrom(list, today)?.date).toBe("2026-06-19");
+  });
+
+  it("advances past today's shift once it is logged as worked", () => {
+    const list = [mk("2026-06-19", "worked"), mk("2026-06-21"), mk("2026-06-30")];
+    expect(nextShiftFrom(list, today)?.date).toBe("2026-06-21");
   });
 
   it("ignores swapped-out shifts (you gave it away)", () => {
     const list = [mk("2026-06-20", "swapped-out"), mk("2026-06-22", "planned")];
     expect(nextShiftFrom(list, today)?.date).toBe("2026-06-22");
+  });
+
+  it("counts swapped-in shifts as upcoming", () => {
+    const list = [mk("2026-06-19", "worked"), mk("2026-06-20", "swapped-in")];
+    expect(nextShiftFrom(list, today)?.date).toBe("2026-06-20");
   });
 
   it("returns null when nothing is upcoming", () => {

@@ -25,9 +25,10 @@ export function shiftsInMonth(shifts: Shift[], cursor: Date): Shift[] {
 
 /**
  * The genuine next real shift from `today` — today-anchored, NOT tied to the viewed
- * month. Counts planned / worked / swapped-in (an upcoming obligation); ignores
- * swapped-out (you gave it away). Returns the earliest such shift on or after today,
- * or null if none upcoming.
+ * month. Counts planned / swapped-in (an upcoming obligation); ignores swapped-out
+ * (you gave it away) and worked (already logged — once today's shift is entered,
+ * "next" advances to the following one). Returns the earliest such shift on or
+ * after today, or null if none upcoming.
  */
 export function nextShiftFrom(shifts: Shift[], today: Date): Shift | null {
   const todayMidnight = new Date(
@@ -37,7 +38,7 @@ export function nextShiftFrom(shifts: Shift[], today: Date): Shift | null {
   );
   let best: Shift | null = null;
   for (const s of shifts) {
-    if (s.status === "swapped-out") continue;
+    if (s.status === "swapped-out" || s.status === "worked") continue;
     const d = shiftDate(s.date);
     if (d < todayMidnight) continue;
     if (!best || d < shiftDate(best.date)) best = s;
