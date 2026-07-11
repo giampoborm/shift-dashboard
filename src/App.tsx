@@ -422,7 +422,6 @@ function Home(props: {
               label={sideView}
               money={sideView === "brutto" ? month.gross : month.net}
               variant="minor"
-              layout="vert"
               onClick={() => setSideView(sideView === "brutto" ? "netto" : "brutto")}
               title="Tap to switch brutto / netto"
             />

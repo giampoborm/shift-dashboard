@@ -307,26 +307,24 @@ button:disabled:hover { background: var(--panel-2); }
   .hero-amount { margin-left: auto; text-align: right; }
 }
 
-/* ── Money grid (Home): a typographic composition. "total" spans the full width
-      on its own row up top; "tips" and the brutto/netto toggle split the row
-      underneath it evenly. The group is centred on the page. */
+/* ── Money grid (Home): a typographic composition. Mobile: "total" spans the
+      full width on its own row up top; "tips" and the brutto/netto card sit
+      side by side underneath it, both normal (unrotated) orientation. Desktop
+      (see media query below): one flat horizontal row, unchanged from before. */
 .money-grid {
   display: flex;
   flex-direction: column;
   width: 100%;
   max-width: 100%;
   margin: 0 auto;
-  gap: 0.1rem;
+  gap: 0.15rem;
   padding: 0.2rem 0 0.5rem;
 }
-.mg-total { width: 100%; }
-.mg-total .ms { width: 100%; }
 .mg-row {
   display: flex;
-  align-items: stretch;
-  gap: clamp(0.5rem, 3vw, 1.5rem);
+  align-items: flex-end;
+  gap: clamp(1.2rem, 5vw, 2.2rem);
 }
-.mg-row > .ms, .mg-row > .ms-wrap { flex: 1 1 0; min-width: 0; }
 /* wrapper that lets the payslip "!" badge sit on the salary card's corner */
 .ms-wrap { position: relative; display: flex; min-width: 0; }
 .ms-wrap > .ms { flex: 1; }
@@ -359,17 +357,15 @@ button:disabled:hover { background: var(--panel-2); }
 .money-grid .ms-mid  .ms-foot .k { font-size: clamp(0.85rem, 3.5vw, 1.25rem); }
 .money-grid .ms-mid  .sub        { font-size: clamp(0.8rem, 3vw, 1.05rem); }
 
-/* vert — the brutto/netto toggle: the SAME stack layout as total/tips, with the
-   whole card turned 90° clockwise. writing-mode does the rotation AND reserves
-   space correctly, so nothing else needs overriding. */
-.money-grid .ms-vert { align-items: center; justify-content: center; }
-.money-grid .ms-vert .ms-body    { writing-mode: vertical-rl; transform: rotate(180deg); }
-.money-grid .ms-vert .v          { font-size: clamp(1.9rem, 9vw, 3rem); }
-.money-grid .ms-vert .ms-foot .k { font-size: clamp(0.85rem, 3.5vw, 1.25rem); }
-.money-grid .ms-vert .sub        { font-size: clamp(0.8rem, 3vw, 1.05rem); }
+/* minor — the brutto/netto toggle. Same stack layout as total/tips, normal
+   (unrotated) orientation, sized a step down from "mid". */
+.money-grid .ms-minor { align-self: flex-end; }
+.money-grid .ms-minor .v          { font-size: clamp(1.9rem, 9vw, 3rem); }
+.money-grid .ms-minor .ms-foot .k { font-size: clamp(0.85rem, 3.5vw, 1.25rem); }
+.money-grid .ms-minor .sub        { font-size: clamp(0.8rem, 3vw, 1.05rem); }
 
-/* Desktop: drop the centred typographic grid — just a simple horizontal row of
-   cards, brutto/netto un-rotated. (Mobile keeps the composed layout above.) */
+/* Desktop: drop the composed mobile layout — just a simple horizontal row of
+   all three cards, exactly as before the mobile redesign. */
 @media (min-width: 561px) {
   .money-grid {
     display: flex;
@@ -383,10 +379,6 @@ button:disabled:hover { background: var(--panel-2); }
   }
   /* dissolve the mobile-only wrappers so total/tips/salary join one flat row */
   .mg-total, .mg-row { display: contents; }
-  .money-grid .ms-hero, .money-grid .ms-mid { align-self: flex-end; }
-  /* un-rotate the brutto/netto card so it sits horizontal like the rest */
-  .money-grid .ms-vert .ms-body { writing-mode: horizontal-tb; transform: none; }
-  .money-grid .ms-vert, .money-grid .ms-wrap { align-self: flex-end; }
 }
 
 /* ── Payslip reconciliation: red "!" on the salary card + its framed popup ──── */
