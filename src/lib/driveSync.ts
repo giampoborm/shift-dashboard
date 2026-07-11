@@ -2,8 +2,16 @@
 // snapshot in the user's PRIVATE appDataFolder (drive.appdata scope: a hidden folder
 // only this app can see — even a leaked token can't reach the rest of his Drive).
 //
-// No backend, so no refresh token: we use Google Identity Services' in-browser token
-// client. Tokens last ~1h and are re-requested silently while the grant is alive.
+// Auth: OAuth 2.0 authorization-code + PKCE, full-page redirect (no popups — those
+// are unreliable in an installed mobile PWA, which is exactly where this kept
+// breaking). The one-time code→token exchange and later refresh-token exchanges need
+// the Google client SECRET, which can't live in the browser; a tiny same-origin
+// Worker route (worker/index.ts) holds it and relays those two calls. Everything else
+// — the Drive REST calls that actually move data — still goes straight from the
+// browser to Google with the access token; no user data ever touches the Worker.
+// The refresh token itself lives in localStorage and doesn't expire on its own, so
+// this survives reloads/new tabs without ever re-showing the consent screen.
+//
 // The pure decision/merge logic lives in dbSnapshot.ts; this file is the plumbing.
 
 import {
@@ -18,33 +26,22 @@ import {
 
 const SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const FILE_NAME = "shift-dashboard.json";
+const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 
 const LS = {
   clientId: "sync.clientId",
-  connected: "sync.connected", // "1" once the user has granted consent at least once
+  connected: "sync.connected", // "1" once we're holding a usable refresh token
+  refreshToken: "sync.refreshToken",
   deviceName: "sync.deviceName",
   lastSyncedHash: "sync.lastSyncedHash",
   lastSyncedAt: "sync.lastSyncedAt",
 } as const;
 
-// Minimal shape of the GIS global we use; avoids pulling @types/google.accounts.
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        oauth2: {
-          initTokenClient(cfg: {
-            client_id: string;
-            scope: string;
-            callback: (r: { access_token?: string; expires_in?: number; error?: string }) => void;
-            error_callback?: (e: { type?: string; message?: string }) => void;
-          }): { requestAccessToken(opts?: { prompt?: string }): void };
-          revoke(token: string, done?: () => void): void;
-        };
-      };
-    };
-  }
-}
+// PKCE state for the in-flight redirect round trip only; cleared once consumed.
+const SS = {
+  codeVerifier: "sync.oauth.codeVerifier",
+  state: "sync.oauth.state",
+} as const;
 
 // --- Config & sync metadata (per-device, in localStorage — never itself synced) ---
 
@@ -60,7 +57,7 @@ export function isConfigured(): boolean {
   return !!getClientId();
 }
 export function isConnected(): boolean {
-  return localStorage.getItem(LS.connected) === "1" && isConfigured();
+  return localStorage.getItem(LS.connected) === "1" && !!localStorage.getItem(LS.refreshToken);
 }
 export function getDeviceName(): string {
   return localStorage.getItem(LS.deviceName) || defaultDeviceName();
@@ -83,75 +80,171 @@ function rememberSynced(hash: string): void {
   localStorage.setItem(LS.lastSyncedAt, new Date().toISOString());
 }
 
-function disconnectLocal(): void {
+/** Drop the local grant record (NOT a revoke — used when the refresh token itself
+    turns out to be dead, so the next Connect starts clean). */
+function forgetGrant(): void {
   localStorage.removeItem(LS.connected);
+  localStorage.removeItem(LS.refreshToken);
 }
 
-export function disconnect(): void {
-  const t = accessToken;
+/** Best-effort revoke at Google + drop the local grant. Revoke doesn't need the
+    client secret, so this can happen straight from the browser. */
+export async function disconnect(): Promise<void> {
+  const refreshToken = localStorage.getItem(LS.refreshToken);
   accessToken = null;
   tokenExpiry = 0;
-  disconnectLocal();
-  if (t && window.google?.accounts?.oauth2) window.google.accounts.oauth2.revoke(t);
+  forgetGrant();
+  if (refreshToken) {
+    try {
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(refreshToken)}`, {
+        method: "POST",
+      });
+    } catch {
+      // best-effort — the local grant is already gone either way
+    }
+  }
 }
 
-// --- Google Identity Services loader + token ------------------------------
+// --- PKCE helpers -----------------------------------------------------------
 
-let gisPromise: Promise<void> | null = null;
-function loadGis(): Promise<void> {
-  if (window.google?.accounts?.oauth2) return Promise.resolve();
-  if (gisPromise) return gisPromise;
-  gisPromise = new Promise((resolve, reject) => {
-    const s = document.createElement("script");
-    s.src = "https://accounts.google.com/gsi/client";
-    s.async = true;
-    s.defer = true;
-    s.onload = () => resolve();
-    s.onerror = () => {
-      gisPromise = null;
-      reject(new Error("Couldn't load Google sign-in. Check your connection / ad-blocker."));
-    };
-    document.head.appendChild(s);
+function base64url(bytes: Uint8Array): string {
+  let bin = "";
+  bytes.forEach((b) => (bin += String.fromCharCode(b)));
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function randomToken(byteLen: number): string {
+  const bytes = new Uint8Array(byteLen);
+  crypto.getRandomValues(bytes);
+  return base64url(bytes);
+}
+
+async function codeChallengeFor(verifier: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  return base64url(new Uint8Array(digest));
+}
+
+function redirectUri(): string {
+  // The root path, so the redirect lands back on the SPA (its fallback route)
+  // with no special callback page needed. Must exactly match what's registered
+  // as an Authorized redirect URI in Google Cloud Console.
+  return `${location.origin}/`;
+}
+
+/**
+ * Explicit user action: build the PKCE challenge, stash it for the trip back, and
+ * navigate the whole page to Google's consent screen. There is no popup — installed
+ * PWAs on mobile handle full-page redirects far more reliably. This function does
+ * not return under normal operation (the page navigates away).
+ */
+export async function connect(): Promise<void> {
+  const clientId = getClientId();
+  if (!clientId) throw new Error("No Google client ID configured.");
+  const verifier = randomToken(48);
+  const state = randomToken(16);
+  sessionStorage.setItem(SS.codeVerifier, verifier);
+  sessionStorage.setItem(SS.state, state);
+  const challenge = await codeChallengeFor(verifier);
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri(),
+    response_type: "code",
+    scope: SCOPE,
+    access_type: "offline",
+    prompt: "consent", // forces a refresh_token every time, not just on first grant
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+    state,
   });
-  return gisPromise;
+  location.href = `${AUTH_URL}?${params}`;
 }
+
+/**
+ * Call once on app boot. If the URL carries an OAuth redirect (`?code=…&state=…`),
+ * exchanges it for tokens via the Worker relay, stores the refresh token, and
+ * strips the query string. Safe to call unconditionally — it's a no-op otherwise.
+ * Returns true if it just completed a fresh connection.
+ */
+export async function consumeAuthRedirect(): Promise<boolean> {
+  const url = new URL(location.href);
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  const authError = url.searchParams.get("error");
+  const verifier = sessionStorage.getItem(SS.codeVerifier);
+  const expectedState = sessionStorage.getItem(SS.state);
+  sessionStorage.removeItem(SS.codeVerifier);
+  sessionStorage.removeItem(SS.state);
+
+  if (!code && !authError) return false;
+
+  // Strip the OAuth params so a refresh doesn't try to replay the code.
+  url.searchParams.delete("code");
+  url.searchParams.delete("state");
+  url.searchParams.delete("scope");
+  url.searchParams.delete("error");
+  history.replaceState(null, "", url.toString());
+
+  if (authError || !code || !verifier || !state || state !== expectedState) return false;
+
+  const res = await fetch("/api/google/exchange", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, codeVerifier: verifier, redirectUri: redirectUri() }),
+  });
+  if (!res.ok) return false;
+  const data = (await res.json()) as { access_token?: string; refresh_token?: string; expires_in?: number };
+  if (!data.access_token || !data.refresh_token) return false;
+
+  accessToken = data.access_token;
+  tokenExpiry = Date.now() + (data.expires_in ?? 3600) * 1000;
+  localStorage.setItem(LS.refreshToken, data.refresh_token);
+  localStorage.setItem(LS.connected, "1");
+  return true;
+}
+
+// --- Access token (refreshed via the Worker relay, no GIS/session dependency) ----
 
 let accessToken: string | null = null;
 let tokenExpiry = 0;
 
+/** Thrown when Google itself rejected the refresh token (revoked/expired grant) —
+    distinct from a network/offline failure, which must NOT force a reconnect. */
+class AuthError extends Error {}
+
+async function refreshAccessToken(refreshToken: string): Promise<{ access_token: string; expires_in?: number }> {
+  const res = await fetch("/api/google/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refreshToken }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new AuthError(body.error || `Google refresh failed (${res.status})`);
+  }
+  return res.json();
+}
+
 /**
- * Get a usable access token. `interactive` shows the Google consent popup (used by
- * Connect); otherwise we try silently and fail if the grant has lapsed.
+ * Get a usable access token. `interactive` allows falling back to the full consent
+ * redirect when there's no usable grant yet; otherwise this just fails.
  */
 async function getToken(interactive: boolean): Promise<string> {
   if (accessToken && Date.now() < tokenExpiry - 60_000) return accessToken;
-  await loadGis();
-  const clientId = getClientId();
-  if (!clientId) throw new Error("No Google client ID configured.");
-  return new Promise<string>((resolve, reject) => {
-    const client = window.google!.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: SCOPE,
-      callback: (r) => {
-        if (r.error || !r.access_token) {
-          reject(new Error(r.error || "Authorization was cancelled."));
-          return;
-        }
-        accessToken = r.access_token;
-        tokenExpiry = Date.now() + (r.expires_in ?? 3600) * 1000;
-        localStorage.setItem(LS.connected, "1");
-        resolve(accessToken);
-      },
-      error_callback: (e) => reject(new Error(e.message || "Google sign-in failed.")),
-    });
-    // prompt:"" = silent (reuse existing grant); "consent" forces the chooser.
-    client.requestAccessToken({ prompt: interactive ? "consent" : "" });
-  });
-}
-
-/** Explicit user action: open the consent popup and remember the grant. */
-export async function connect(): Promise<void> {
-  await getToken(true);
+  const refreshToken = localStorage.getItem(LS.refreshToken);
+  if (refreshToken) {
+    try {
+      const data = await refreshAccessToken(refreshToken);
+      accessToken = data.access_token;
+      tokenExpiry = Date.now() + (data.expires_in ?? 3600) * 1000;
+      return accessToken;
+    } catch (e) {
+      if (e instanceof AuthError) forgetGrant();
+      throw e;
+    }
+  }
+  if (!interactive) throw new AuthError("Not connected to Google Drive.");
+  await connect();
+  throw new Error("Redirecting to Google sign-in…"); // unreachable — connect() navigates away
 }
 
 // --- Drive REST (appDataFolder) -------------------------------------------
@@ -164,7 +257,7 @@ async function driveFetch(url: string, init: RequestInit, token: string): Promis
   if (res.status === 401) {
     // token died mid-flight — drop it so the next call re-auths
     accessToken = null;
-    throw new Error("Google session expired — connect again.");
+    throw new Error("Google session expired — try Sync again.");
   }
   if (!res.ok) throw new Error(`Drive API error ${res.status}: ${await res.text()}`);
   return res;
@@ -226,7 +319,7 @@ export type SyncResult =
 /**
  * Reconcile this device with Drive. Auto-resolves push/pull; returns "conflict"
  * (without touching anything) when both sides changed — the UI then asks the user.
- * `interactive` decides whether a lapsed grant may pop the consent dialog.
+ * `interactive` decides whether a missing/dead grant may redirect to consent.
  */
 export async function sync(interactive = true): Promise<SyncResult> {
   const token = await getToken(interactive);
@@ -279,29 +372,19 @@ export async function resolveConflict(keep: "local" | "remote"): Promise<SyncRes
 }
 
 /**
- * Best-effort pull/push on app open. Silent (no popup); if the grant has lapsed or a
- * conflict appears, it backs off so the user deals with it in Settings. Returns the
- * result for an optional banner, or null if sync isn't set up.
+ * Best-effort pull/push on app open. Silent (no redirect); if the grant has lapsed
+ * or a conflict appears, it backs off so the user deals with it in Settings. Returns
+ * the result for an optional banner, or null if sync isn't set up.
  */
 export async function syncOnOpen(): Promise<SyncResult | null> {
   if (!isConnected()) return null;
   try {
     return await sync(false);
   } catch (e) {
-    // Drop "connected" only when the GRANT is the problem. A transient failure —
-    // opening the PWA offline, a flaky connection, GIS blocked by an ad-blocker —
-    // must NOT force a manual reconnect; the next open just tries again.
-    if (navigator.onLine && isAuthError(e)) disconnectLocal();
+    // Drop the grant only when Google itself rejected it (revoked/expired refresh
+    // token). A transient failure — offline, a flaky connection — must NOT force a
+    // manual reconnect; the next open just tries again.
+    if (e instanceof AuthError) forgetGrant();
     return null;
   }
-}
-
-/** Errors that mean the Google grant itself has lapsed/been revoked. Deliberately
-    excludes "cancelled": a dismissed consent popup (interactive connect only —
-    can't happen in silent syncOnOpen) is not a revoked grant. */
-function isAuthError(e: unknown): boolean {
-  const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
-  return /interaction_required|login_required|access_denied|invalid_grant|expired|sign-in failed/.test(
-    msg,
-  );
 }

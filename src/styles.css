@@ -307,28 +307,26 @@ button:disabled:hover { background: var(--panel-2); }
   .hero-amount { margin-left: auto; text-align: right; }
 }
 
-/* ── Money grid (Home): a typographic composition. "total" + "tips" stack on the
-      left (label + breakdown beneath each figure); brutto/netto share one tappable
-      card whose number runs vertically. The group is centred on the page. */
+/* ── Money grid (Home): a typographic composition. "total" spans the full width
+      on its own row up top; "tips" and the brutto/netto toggle split the row
+      underneath it evenly. The group is centred on the page. */
 .money-grid {
-  display: grid;
-  grid-template-columns: auto auto;  /* size to content so the group can be centred */
-  justify-content: center;           /* … and centre it on the page */
-  width: fit-content;
-  max-width: 100%;
-  margin: 0 auto;
-  align-items: stretch;
-  column-gap: clamp(0.5rem, 3vw, 1.5rem);
-  padding: 0.2rem 0 0.5rem;
-}
-.mg-left {
-  min-width: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
   gap: 0.1rem;
+  padding: 0.2rem 0 0.5rem;
 }
-.money-grid > .ms-vert, .money-grid > .ms-wrap { align-self: stretch; }
+.mg-total { width: 100%; }
+.mg-total .ms { width: 100%; }
+.mg-row {
+  display: flex;
+  align-items: stretch;
+  gap: clamp(0.5rem, 3vw, 1.5rem);
+}
+.mg-row > .ms, .mg-row > .ms-wrap { flex: 1 1 0; min-width: 0; }
 /* wrapper that lets the payslip "!" badge sit on the salary card's corner */
 .ms-wrap { position: relative; display: flex; min-width: 0; }
 .ms-wrap > .ms { flex: 1; }
@@ -383,11 +381,12 @@ button:disabled:hover { background: var(--panel-2); }
     column-gap: clamp(1.5rem, 5vw, 3.5rem);
     row-gap: 1rem;
   }
-  .mg-left { flex-direction: row; align-items: flex-end; gap: clamp(1.5rem, 5vw, 3.5rem); }
+  /* dissolve the mobile-only wrappers so total/tips/salary join one flat row */
+  .mg-total, .mg-row { display: contents; }
   .money-grid .ms-hero, .money-grid .ms-mid { align-self: flex-end; }
   /* un-rotate the brutto/netto card so it sits horizontal like the rest */
   .money-grid .ms-vert .ms-body { writing-mode: horizontal-tb; transform: none; }
-  .money-grid > .ms-vert, .money-grid > .ms-wrap { align-self: flex-end; }
+  .money-grid .ms-vert, .money-grid .ms-wrap { align-self: flex-end; }
 }
 
 /* ── Payslip reconciliation: red "!" on the salary card + its framed popup ──── */

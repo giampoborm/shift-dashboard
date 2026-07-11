@@ -34,7 +34,7 @@ See **[`docs/ROADMAP.md`](docs/ROADMAP.md)** for the current focus, what's next,
 - `src/lib/estimates.ts` — future-earnings estimate engine; buckets (morning-weekday/weekend, evening, evening-sunday), p25/median/p75 with bucket→family→all fallback.
 - `src/lib/exportCsv.ts` — derived-earnings CSV export + download helper.
 - `src/lib/dbSnapshot.ts` — whole-DB snapshot (serialize/apply all 5 tables) + pure content-`hashData` + `resolveSync` merge decision (first-push/in-sync/push/pull/conflict). Tested. `SNAPSHOT_SCHEMA` bumps with the Dexie version.
-- `src/lib/driveSync.ts` — Google Drive sync plumbing: lazy GIS script load, in-browser token client (no refresh token), Drive REST against `appDataFolder`, sync metadata in localStorage, `sync()`/`resolveConflict()`/`syncOnOpen()`.
+- `src/lib/driveSync.ts` — Google Drive sync plumbing: OAuth authorization-code + PKCE via full-page redirect (no popups — unreliable in an installed mobile PWA), refresh token in localStorage so reconnecting isn't needed on every open, Drive REST against `appDataFolder`, sync metadata in localStorage, `sync()`/`resolveConflict()`/`syncOnOpen()`/`consumeAuthRedirect()`. The code↔token exchange goes through `worker/index.ts` (holds the client secret server-side).
 - `src/components/SyncPanel.tsx` — Drive sync section in Settings (client-ID entry, Connect/Sync/Disconnect, conflict guard prompt). Wired into `App.tsx` (silent `syncOnOpen` on mount + status banner; `refreshSettings` after a pull replaces the DB).
 - `src/components/ShiftEditor.tsx` — add/edit/delete modal, post-shift entry (planned→worked), swap-out + swapped-in chaining.
 - `src/components/Calendar.tsx` — custom Monday-start month grid; type-coloured chips (worked=filled, planned=outline, swapped=struck); click day→add, click chip→edit.
@@ -48,7 +48,7 @@ See **[`docs/ROADMAP.md`](docs/ROADMAP.md)** for the current focus, what's next,
 - Rows 33–34 of history.csv: `dom 29` is mis-dated as `March 28` (dup of `sab 28`) — flagged, not auto-fixed.
 
 ## Architecture decisions (locked)
-- **Local-first, no backend.** Personal financial data stays on device. Manual JSON backup/restore for now; cross-device sync will go through the user's **own Google Drive `appdata` folder** (chosen 2026-06-17 over Supabase — data stays in his account, no new login, no free-tier pause), added later without changing the data layer. See [[sync-approach]]. Free static hosting (Netlify/Vercel/GH Pages) is needed for phone use — a new Tier-1 step.
+- **Local-first, effectively no backend.** Personal financial data stays on device. Manual JSON backup/restore for now; cross-device sync goes through the user's **own Google Drive `appdata` folder** (chosen 2026-06-17 over Supabase — data stays in his account, no new login, no free-tier pause). See [[sync-approach]]. One narrow exception (2026-07-11): `worker/index.ts` is a Cloudflare Worker route that relays the Google OAuth code↔token exchange (holds the client secret so it never ships to the browser). It never sees shift/tip/pay data — only OAuth plumbing — so the "no user data touches a server" invariant holds even though "no backend" now has one stateless auth-relay endpoint.
 - **No German payroll engine.** Earnings derived from real data (see model below).
 - **Google Calendar sync deferred.** In-app calendar + one-way `.ics` export first; OAuth two-way sync later.
 - **Estimates are ranges, not point values** — median + p25/p75 per (shiftType, weekday), because tip variance is high.

@@ -37,9 +37,9 @@ describe("isInMonth / shiftsInMonth", () => {
 describe("nextShiftFrom", () => {
   const today = new Date("2026-06-19T12:00"); // afternoon — today still counts
 
-  it("returns the earliest shift on or after today", () => {
+  it("returns the earliest unlogged shift", () => {
     const list = [mk("2026-06-10"), mk("2026-06-25"), mk("2026-06-21")];
-    expect(nextShiftFrom(list, today)?.date).toBe("2026-06-21");
+    expect(nextShiftFrom(list, today)?.date).toBe("2026-06-10");
   });
 
   it("counts a planned shift dated today", () => {
@@ -52,6 +52,14 @@ describe("nextShiftFrom", () => {
     expect(nextShiftFrom(list, today)?.date).toBe("2026-06-21");
   });
 
+  it("keeps an overdue unlogged shift as next past its own midnight", () => {
+    // 2026-06-19 was yesterday relative to `today`-plus-one-day, but it's still
+    // unlogged (still "planned") — it must stay "next" instead of being skipped.
+    const dayAfter = new Date("2026-06-20T00:05");
+    const list = [mk("2026-06-19"), mk("2026-06-25")];
+    expect(nextShiftFrom(list, dayAfter)?.date).toBe("2026-06-19");
+  });
+
   it("ignores swapped-out shifts (you gave it away)", () => {
     const list = [mk("2026-06-20", "swapped-out"), mk("2026-06-22", "planned")];
     expect(nextShiftFrom(list, today)?.date).toBe("2026-06-22");
@@ -62,7 +70,7 @@ describe("nextShiftFrom", () => {
     expect(nextShiftFrom(list, today)?.date).toBe("2026-06-20");
   });
 
-  it("returns null when nothing is upcoming", () => {
-    expect(nextShiftFrom([mk("2026-06-01"), mk("2026-05-01")], today)).toBeNull();
+  it("returns null when nothing is unlogged", () => {
+    expect(nextShiftFrom([mk("2026-06-01", "worked"), mk("2026-05-01", "swapped-out")], today)).toBeNull();
   });
 });

@@ -24,24 +24,19 @@ export function shiftsInMonth(shifts: Shift[], cursor: Date): Shift[] {
 }
 
 /**
- * The genuine next real shift from `today` — today-anchored, NOT tied to the viewed
- * month. Counts planned / swapped-in (an upcoming obligation); ignores swapped-out
- * (you gave it away) and worked (already logged — once today's shift is entered,
- * "next" advances to the following one). Returns the earliest such shift on or
- * after today, or null if none upcoming.
+ * The genuine next real shift — the earliest still-unlogged obligation (planned /
+ * swapped-in), NOT tied to the viewed month. Ignores swapped-out (you gave it away)
+ * and worked (already logged). Deliberately NOT filtered to "on or after today": a
+ * shift stays "next" past its own midnight — even overdue — until it's logged as
+ * worked, so the card doesn't silently jump to the following shift before you've
+ * had a chance to log the one that just happened. `today` is unused but kept so
+ * callers read as today-anchored and the signature can grow a real use later.
  */
-export function nextShiftFrom(shifts: Shift[], today: Date): Shift | null {
-  const todayMidnight = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-  );
+export function nextShiftFrom(shifts: Shift[], _today: Date): Shift | null {
   let best: Shift | null = null;
   for (const s of shifts) {
     if (s.status === "swapped-out" || s.status === "worked") continue;
-    const d = shiftDate(s.date);
-    if (d < todayMidnight) continue;
-    if (!best || d < shiftDate(best.date)) best = s;
+    if (!best || shiftDate(s.date) < shiftDate(best.date)) best = s;
   }
   return best;
 }

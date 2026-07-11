@@ -108,7 +108,9 @@ export function SyncPanel(props: { onDataReplaced: () => void }) {
       <div className="row-actions" style={{ marginTop: "0.6rem", display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
         <button onClick={saveClientId}>Save</button>
         {configured && !connected && (
-          <button className="primary" disabled={busy} onClick={() => run(async () => { await connect(); setConnected(true); setMsg("Connected ✓"); })}>
+          // connect() redirects the whole page to Google's consent screen and
+          // back — there's nothing meaningful to await here, the app reloads.
+          <button className="primary" disabled={busy} onClick={() => run(() => connect())}>
             Connect Google Drive
           </button>
         )}
@@ -117,7 +119,11 @@ export function SyncPanel(props: { onDataReplaced: () => void }) {
             <button className="primary" disabled={busy} onClick={() => run(async () => applyResult(await sync(true)))}>
               {busy ? "Syncing…" : "Sync now"}
             </button>
-            <button disabled={busy} onClick={() => { disconnect(); setConnected(false); setMsg("Disconnected (data stays on this device)."); }}>
+            <button disabled={busy} onClick={() => run(async () => {
+              await disconnect();
+              setConnected(false);
+              setMsg("Disconnected (data stays on this device).");
+            })}>
               Disconnect
             </button>
           </>
@@ -175,11 +181,12 @@ function SetupHelp(props: { origin: string }) {
         <li>Go to <code>console.cloud.google.com</code> → create a project.</li>
         <li><strong>APIs &amp; Services → Library</strong> → enable <strong>Google Drive API</strong>.</li>
         <li><strong>OAuth consent screen</strong> → <em>External</em>, keep it in <strong>Testing</strong>, add yourself as a test user, add the scope <code>.../auth/drive.appdata</code>.</li>
-        <li><strong>Credentials → Create credentials → OAuth client ID</strong> → type <em>Web application</em>. Under <strong>Authorized JavaScript origins</strong> add <code>{props.origin || "https://your-app-url"}</code> and <code>http://localhost:5173</code>.</li>
-        <li>Copy the <strong>Client ID</strong> here and press Save, then Connect.</li>
+        <li><strong>Credentials → Create credentials → OAuth client ID</strong> → type <em>Web application</em>. Under <strong>Authorized JavaScript origins</strong> add <code>{props.origin || "https://your-app-url"}</code>. Under <strong>Authorized redirect URIs</strong> add <code>{props.origin ? `${props.origin}/` : "https://your-app-url/"}</code> — this must match exactly (trailing slash included).</li>
+        <li>Copy the <strong>Client ID</strong> here and press Save. The matching <strong>Client secret</strong> does NOT go here — it's set once as a Cloudflare Worker secret so it never ships to the browser (see deployment notes).</li>
+        <li>Press Connect — you'll be sent to Google's consent screen and back.</li>
       </ol>
       <p className="muted" style={{ fontSize: "0.74rem" }}>
-        The client ID isn’t a secret (it ships in the page); access is gated by the origins you listed and your Google login.
+        The client ID isn’t a secret (it ships in the page); access is gated by the redirect URI you registered and your Google login.
       </p>
     </details>
   );

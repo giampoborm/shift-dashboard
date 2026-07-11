@@ -11,7 +11,7 @@ import { shiftsToCsv, downloadText } from "./lib/exportCsv";
 import { estimateShift, sumEstimates, type Range } from "./lib/estimates";
 import { nextShiftFrom, shiftsInMonth } from "./lib/period";
 import { reconcileMonth } from "./lib/reconcile";
-import { isConfigured, sync, syncOnOpen } from "./lib/driveSync";
+import { consumeAuthRedirect, isConfigured, sync, syncOnOpen } from "./lib/driveSync";
 import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
 import { ReconcilePopup } from "./components/ReconcilePopup";
 import { Calendar } from "./components/Calendar";
@@ -66,7 +66,15 @@ export function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [warnings, setWarnings] = useState<ImportWarning[]>([]);
   const [lastImport, setLastImport] = useState<string>("");
-  const [room, setRoom] = useState<Room>("home");
+  // Restored from sessionStorage when set: survives the full-page redirect round
+  // trip to Google's consent screen (Drive Connect), which otherwise drops back
+  // onto Home instead of the Settings panel the user was just on.
+  const [room, setRoom] = useState<Room>(
+    () => (sessionStorage.getItem("ui.room") as Room | null) ?? "home",
+  );
+  useEffect(() => {
+    sessionStorage.setItem("ui.room", room);
+  }, [room]);
   const [editor, setEditor] = useState<{ shift: Shift | null; prefill?: EditorPrefill } | null>(null);
   const historyRef = useRef<HTMLInputElement>(null);
   const planRef = useRef<HTMLInputElement>(null);
@@ -106,6 +114,10 @@ export function App() {
     ensureSeeded()
       .then(getSettings)
       .then(setSettings)
+      // Finish the Drive OAuth redirect round trip (no-op unless the URL just
+      // carried a `?code=…` back from Google) before syncing, so a fresh
+      // connection is picked up immediately instead of on the next open.
+      .then(() => consumeAuthRedirect())
       .then(() =>
         syncOnOpen().then((r) => {
           if (!r) return;
@@ -396,33 +408,35 @@ function Home(props: {
         <button onClick={() => setCursor(startOfMonth(new Date()))}>Current</button>
       </div>
 
-      {/* Typographic money grid: total + tips stack on the left (packed tight),
-          brutto/netto share one tappable card flush to the right edge — the left
-          block grows to fill, so the group spans the full width. */}
+      {/* Typographic money grid: total sits alone on top (mobile spans the full
+          width); tips + the brutto/netto toggle share the row underneath it.
+          Desktop collapses back to one simple horizontal row (see CSS). */}
       <div className="money-grid">
-        <div className="mg-left">
+        <div className="mg-total">
           <MiniStat label="total" money={month.takeHome} variant="hero" />
-          <MiniStat label="tips" money={month.tips} variant="mid" />
         </div>
-        <div className="ms-wrap">
-          <MiniStat
-            label={sideView}
-            money={sideView === "brutto" ? month.gross : month.net}
-            variant="minor"
-            layout="vert"
-            onClick={() => setSideView(sideView === "brutto" ? "netto" : "brutto")}
-            title="Tap to switch brutto / netto"
-          />
-          {recon && (recon.discrepant || recon.slip.useSlipTotals) && (
-            <button
-              className={`recon-badge ${recon.slip.useSlipTotals ? "resolved" : ""}`}
-              onClick={() => setShowRecon(true)}
-              title="Logged shifts and this month's payslip disagree — tap for details"
-              aria-label="Payslip discrepancy details"
-            >
-              !
-            </button>
-          )}
+        <div className="mg-row">
+          <MiniStat label="tips" money={month.tips} variant="mid" />
+          <div className="ms-wrap">
+            <MiniStat
+              label={sideView}
+              money={sideView === "brutto" ? month.gross : month.net}
+              variant="minor"
+              layout="vert"
+              onClick={() => setSideView(sideView === "brutto" ? "netto" : "brutto")}
+              title="Tap to switch brutto / netto"
+            />
+            {recon && (recon.discrepant || recon.slip.useSlipTotals) && (
+              <button
+                className={`recon-badge ${recon.slip.useSlipTotals ? "resolved" : ""}`}
+                onClick={() => setShowRecon(true)}
+                title="Logged shifts and this month's payslip disagree — tap for details"
+                aria-label="Payslip discrepancy details"
+              >
+                !
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

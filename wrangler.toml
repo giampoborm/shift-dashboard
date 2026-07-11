@@ -1,10 +1,13 @@
-# Cloudflare Workers (Static Assets) config. This is a static PWA with no
-# server code, so there is no Worker script (`main`) — wrangler just uploads the
-# built `dist/` folder as static assets.
+# Cloudflare Workers config. Mostly a static PWA — `main` now points at a tiny
+# Worker script (worker/index.ts) whose ONLY job beyond serving dist/ as static
+# assets is two OAuth relay routes for Google Drive sync (holds the client secret
+# server-side; see worker/index.ts and [[sync-approach]]). No user data passes
+# through the Worker — shifts/tips/etc. still go straight from the browser to the
+# user's own Google Drive appdata folder, same as before.
 #
 # Flow on Cloudflare Builds:
 #   build command:  npm run build      -> produces ./dist
-#   deploy command: npx wrangler deploy -> reads this file, uploads ./dist
+#   deploy command: npx wrangler deploy -> reads this file, uploads ./dist + the Worker
 #
 # `not_found_handling = "single-page-application"` makes unmatched paths serve
 # index.html (SPA fallback), so deep links don't 404. The _headers file in dist
@@ -12,9 +15,18 @@
 #
 # NOTE: `name` must match the Worker project name in the Cloudflare dashboard,
 # otherwise deploy targets a different Worker.
+#
+# Secrets (set once via `npx wrangler secret put NAME`, never committed):
+#   GOOGLE_CLIENT_ID      — the OAuth client ID (not actually secret, but kept
+#                           alongside the secret so both sides of the pair live
+#                           in one place; must match the client ID configured in
+#                           Settings in the app)
+#   GOOGLE_CLIENT_SECRET  — the OAuth client secret from Google Cloud Console
 name = "shift-dashboard"
+main = "worker/index.ts"
 compatibility_date = "2024-11-01"
 
 [assets]
 directory = "./dist"
+binding = "ASSETS"
 not_found_handling = "single-page-application"
