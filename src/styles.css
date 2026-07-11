@@ -307,22 +307,25 @@ button:disabled:hover { background: var(--panel-2); }
   .hero-amount { margin-left: auto; text-align: right; }
 }
 
-/* ── Money grid (Home): a typographic composition. Mobile: "total" spans the
-      full width on its own row up top; "tips" and the brutto/netto card sit
-      side by side underneath it, both normal (unrotated) orientation. Desktop
-      (see media query below): one flat horizontal row, unchanged from before. */
+/* ── Money grid (Home): a typographic composition, centred on the page (not
+      hugging an edge). Mobile: "total" on its own row up top; "tips" and the
+      brutto/netto card sit side by side underneath it, both normal (unrotated)
+      orientation. Desktop (see media query below): one flat horizontal row,
+      total → tips → brutto/netto, also centred. */
 .money-grid {
   display: flex;
   flex-direction: column;
-  width: 100%;
+  align-items: center;   /* centres each row; the block shrinks to content width */
+  width: fit-content;
   max-width: 100%;
-  margin: 0 auto;
+  margin: 0 auto;         /* … and centres the whole composition on the page */
   gap: 0.15rem;
   padding: 0.2rem 0 0.5rem;
 }
 .mg-row {
   display: flex;
   align-items: flex-end;
+  justify-content: center;
   gap: clamp(1.2rem, 5vw, 2.2rem);
 }
 /* wrapper that lets the payslip "!" badge sit on the salary card's corner */
@@ -346,10 +349,6 @@ button:disabled:hover { background: var(--panel-2); }
 /* label + breakdown ride together beneath the figure, spanning its width */
 .money-grid .ms-foot { display: flex; align-items: baseline; justify-content: space-between; gap: 0.7rem; }
 
-/* both total and tips hang to the right edge of the block */
-.money-grid .ms-hero { align-self: flex-end; }
-.money-grid .ms-mid  { align-self: flex-end; }
-
 .money-grid .ms-hero .v          { font-size: clamp(2.6rem, 14vw, 4.4rem); }
 .money-grid .ms-hero .ms-foot .k { font-size: clamp(1rem, 4.5vw, 1.6rem); }
 .money-grid .ms-hero .sub        { font-size: clamp(0.9rem, 3.5vw, 1.2rem); }
@@ -359,21 +358,21 @@ button:disabled:hover { background: var(--panel-2); }
 
 /* minor — the brutto/netto toggle. Same stack layout as total/tips, normal
    (unrotated) orientation, sized a step down from "mid". */
-.money-grid .ms-minor { align-self: flex-end; }
 .money-grid .ms-minor .v          { font-size: clamp(1.9rem, 9vw, 3rem); }
 .money-grid .ms-minor .ms-foot .k { font-size: clamp(0.85rem, 3.5vw, 1.25rem); }
 .money-grid .ms-minor .sub        { font-size: clamp(0.8rem, 3vw, 1.05rem); }
 
-/* Desktop: drop the composed mobile layout — just a simple horizontal row of
-   all three cards, exactly as before the mobile redesign. */
+/* Desktop: drop the stacked mobile composition — one flat horizontal row,
+   total → tips → brutto/netto, centred on the page (not hugging an edge). */
 @media (min-width: 561px) {
   .money-grid {
     display: flex;
+    flex-direction: row;
     flex-wrap: wrap;
     align-items: flex-end;
-    justify-content: flex-start;
+    justify-content: center;
     width: 100%;
-    margin: 0;
+    margin: 0 auto;
     column-gap: clamp(1.5rem, 5vw, 3.5rem);
     row-gap: 1rem;
   }
