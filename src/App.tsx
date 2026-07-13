@@ -16,7 +16,7 @@ import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
 import { ReconcilePopup } from "./components/ReconcilePopup";
 import { Calendar } from "./components/Calendar";
 import { Settings as SettingsPanel } from "./components/Settings";
-import type { GrossRate, Payslip, Settings, Shift, ShiftType } from "./lib/types";
+import type { GrossRate, Payslip, Settings, Shift, ShiftType, Vacation } from "./lib/types";
 
 // Code-split: pulls in date-holidays (heavy) only when the Vacation tool is opened.
 const VacationPlanner = lazy(() =>
@@ -135,6 +135,7 @@ export function App() {
   const allShifts = useLiveQuery(() => db.shifts.orderBy("date").toArray(), []);
   const rates = useLiveQuery(() => db.rates.toArray(), []);
   const payslips = useLiveQuery(() => db.payslips.toArray(), []);
+  const vacations = useLiveQuery(() => db.vacations.toArray(), []);
 
   const ready = settings && rates && payslips && allShifts;
 
@@ -232,6 +233,7 @@ export function App() {
           settings={settings!}
           rates={rates!}
           payslips={payslips!}
+          vacations={vacations ?? []}
           onEditShift={(s) => setEditor({ shift: s })}
           onAddShift={(date) => setEditor({ shift: null, prefill: { date } })}
           onNewShift={() => setEditor({ shift: null })}
@@ -302,6 +304,7 @@ function Home(props: {
   settings: Settings;
   rates: GrossRate[];
   payslips: Payslip[];
+  vacations: Vacation[];
   onEditShift: (s: Shift) => void;
   onAddShift: (dateIso: string) => void;
   onNewShift: () => void;
@@ -309,7 +312,7 @@ function Home(props: {
   onSync?: () => void;
   syncBusy?: boolean;
 }) {
-  const { allShifts, worked, settings, rates, payslips, onEditShift, onAddShift,
+  const { allShifts, worked, settings, rates, payslips, vacations, onEditShift, onAddShift,
     onNewShift, onOpenSettings, onSync, syncBusy } = props;
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
   // brutto/netto share one card; tapping it toggles which is shown.
@@ -449,6 +452,7 @@ function Home(props: {
         settings={settings}
         rates={rates}
         payslips={payslips}
+        vacations={vacations}
         cursor={cursor}
         onCursorChange={setCursor}
         hideNav

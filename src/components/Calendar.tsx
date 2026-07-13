@@ -16,7 +16,7 @@ import {
 } from "date-fns";
 import { computeShiftEarnings } from "../lib/earnings";
 import { estimateShift } from "../lib/estimates";
-import type { GrossRate, Payslip, Settings, Shift } from "../lib/types";
+import type { GrossRate, Payslip, Settings, Shift, Vacation } from "../lib/types";
 
 const WEEK_HEADERS = ["M", "T", "W", "T", "F", "S", "S"];
 const TYPE_SHORT: Record<string, string> = {
@@ -33,6 +33,7 @@ export function Calendar(props: {
   settings: Settings;
   rates: GrossRate[];
   payslips: Payslip[];
+  vacations?: Vacation[];
   onEditShift: (s: Shift) => void;
   onAddShift: (dateIso: string) => void;
   /** Controlled month cursor — when supplied (Home owns the period), the calendar
@@ -42,7 +43,7 @@ export function Calendar(props: {
   /** Hide the calendar's own ‹ › nav when an outer stepper already owns the month. */
   hideNav?: boolean;
 }) {
-  const { shifts, worked, settings, rates, payslips, onEditShift, onAddShift } = props;
+  const { shifts, worked, settings, rates, payslips, vacations, onEditShift, onAddShift } = props;
   const [localCursor, setLocalCursor] = useState(() => startOfMonth(new Date()));
   const cursor = props.cursor ?? localCursor;
   const setCursor = (d: Date) =>
@@ -59,6 +60,10 @@ export function Calendar(props: {
     const end = endOfWeek(endOfMonth(cursor), { weekStartsOn: 1 });
     return eachDayOfInterval({ start, end });
   }, [cursor]);
+
+  function vacationOn(iso: string): Vacation | undefined {
+    return vacations?.find((v) => iso >= v.from && iso <= v.to);
+  }
 
   // Per-day take-home and the tip slice of it (worked actuals, else estimated median).
   function dayMoney(list: Shift[]): { takeHome: number; tips: number } {
@@ -98,14 +103,20 @@ export function Calendar(props: {
           const list = byDate.get(iso) ?? [];
           const money = dayMoney(list);
           const out = !isSameMonth(d, cursor);
+          const vac = vacationOn(iso);
           return (
             <div
               key={iso}
-              className={`cal-cell${out ? " out" : ""}${isToday(d) ? " today" : ""}`}
+              className={`cal-cell${out ? " out" : ""}${isToday(d) ? " today" : ""}${vac ? " vacation" : ""}`}
               onClick={() => onAddShift(iso)}
               title="Add a shift on this day"
             >
               <div className="cal-daynum">{format(d, "d")}</div>
+              {vac && (
+                <div className="cal-vacation" title={vac.note ?? "vacation"}>
+                  vacation{vac.note ? `: ${vac.note}` : ""}
+                </div>
+              )}
               {list.map((s) => (
                 <button
                   key={s.id}

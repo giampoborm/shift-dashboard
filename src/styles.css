@@ -111,6 +111,7 @@ button:disabled:hover { background: var(--panel-2); }
   display: flex;
   flex: 1;
   gap: 0;               /* contiguous black bar; the white active tab sits on it */
+  background: var(--text);
 }
 .topbar-actions {
   display: flex;
@@ -122,24 +123,46 @@ button:disabled:hover { background: var(--panel-2); }
 .rooms .tab {
   flex: 1;
   text-align: center;
-  background: var(--text);
+  background: transparent;
   color: #fff;
   border: none;
-  border-radius: 0 0 14px 14px;
+  border-radius: 0;
   padding: 0.7rem 0.5rem 0.85rem;
   font-size: clamp(0.95rem, 2.4vw, 1.15rem);
   font-weight: 800;
   letter-spacing: -0.01em;
   text-transform: lowercase;
 }
-.rooms .tab:first-child { border-bottom-left-radius: 0; }
-.rooms .tab:last-child { border-bottom-right-radius: 0; }
 .rooms .tab:hover { background: #2a2a2a; }
 .rooms .tab.active {
   background: #fff;
   color: var(--text);
+  position: relative;
+  border-radius: 0;
 }
+.rooms .tab.active:first-child { border-bottom-left-radius: 14px; }
+.rooms .tab.active:last-child { border-bottom-right-radius: 14px; }
 .rooms .tab.active:hover { background: #fff; }
+
+/* Smooth "notch" where the active (white) tab meets an inactive (black) neighbour:
+   the black bar's corner bulges up into the tab instead of the tab just having a
+   plain rounded corner — an S-curve seam rather than a straight vertical edge. */
+.rooms .tab.active:not(:first-child)::before,
+.rooms .tab.active:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+}
+.rooms .tab.active:not(:first-child)::before {
+  left: 0;
+  background: radial-gradient(circle at bottom left, var(--text) 14px, transparent 14.5px);
+}
+.rooms .tab.active:not(:last-child)::after {
+  right: 0;
+  background: radial-gradient(circle at bottom right, var(--text) 14px, transparent 14.5px);
+}
 
 /* the +new and gear sit quiet in the corner */
 .topbar-actions .tab,
@@ -585,6 +608,18 @@ button.danger:hover { background: var(--bad); color: #fff; }
 /* worked = filled chip (type colour bg, white text); planned = outline */
 .cal-chip.st-worked { background: var(--chip); color: #fff; border-color: transparent; font-weight: 700; }
 .cal-chip.st-swapped-out, .cal-chip.st-swapped-in { opacity: 0.5; text-decoration: line-through; }
+
+.cal-cell.vacation { background: #ecfdf5; }
+.cal-cell.vacation:hover { background: #d8f5e8; }
+.cal-vacation {
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #15803d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
 
 @media (max-width: 560px) {
   .cal-cell { min-height: 66px; }
