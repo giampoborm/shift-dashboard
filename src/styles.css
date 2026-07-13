@@ -110,8 +110,8 @@ button:disabled:hover { background: var(--panel-2); }
 .topbar .rooms {
   display: flex;
   flex: 1;
-  gap: 0;               /* contiguous black bar; the white active tab sits on it */
-  background: var(--text);
+  gap: 0;               /* contiguous bar; each tab supplies its own black background
+                            so a rounded corner on one reveals white behind it, not black */
 }
 .topbar-actions {
   display: flex;
@@ -123,7 +123,7 @@ button:disabled:hover { background: var(--panel-2); }
 .rooms .tab {
   flex: 1;
   text-align: center;
-  background: transparent;
+  background: var(--text);
   color: #fff;
   border: none;
   border-radius: 0;
@@ -137,32 +137,17 @@ button:disabled:hover { background: var(--panel-2); }
 .rooms .tab.active {
   background: #fff;
   color: var(--text);
-  position: relative;
   border-radius: 0;
 }
 .rooms .tab.active:first-child { border-bottom-left-radius: 14px; }
 .rooms .tab.active:last-child { border-bottom-right-radius: 14px; }
 .rooms .tab.active:hover { background: #fff; }
 
-/* Smooth "notch" where the active (white) tab meets an inactive (black) neighbour:
-   the black bar's corner bulges up into the tab instead of the tab just having a
-   plain rounded corner — an S-curve seam rather than a straight vertical edge. */
-.rooms .tab.active:not(:first-child)::before,
-.rooms .tab.active:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  bottom: 0;
-  width: 14px;
-  height: 14px;
-}
-.rooms .tab.active:not(:first-child)::before {
-  left: 0;
-  background: radial-gradient(circle at bottom left, var(--text) 14px, transparent 14.5px);
-}
-.rooms .tab.active:not(:last-child)::after {
-  right: 0;
-  background: radial-gradient(circle at bottom right, var(--text) 14px, transparent 14.5px);
-}
+/* Two adjacent inactive tabs stay a flat black stripe (radius 0). Only the inactive
+   tab touching the active one rounds its own near corner outward — a plain corner,
+   not a bulge added to the active tab — revealing white behind it. */
+.rooms .tab:has(+ .tab.active) { border-bottom-right-radius: 14px; }
+.rooms .tab.active + .tab { border-bottom-left-radius: 14px; }
 
 /* the +new and gear sit quiet in the corner */
 .topbar-actions .tab,
