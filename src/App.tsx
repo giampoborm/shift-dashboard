@@ -41,7 +41,14 @@ function breakdownText(m: { banked: number; projected: number }): string {
 }
 
 const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const SHIFT_TYPES: ShiftType[] = ["opening", "late-morning", "mid-day", "early-closing", "closing"];
+const SHIFT_TYPES: ShiftType[] = [
+  "opening",
+  "late-morning",
+  "mid-day",
+  "early-closing",
+  "closing",
+  "meeting",
+];
 
 // The three "rooms" of the redesigned IA (+ Settings reachable via the gear).
 type Room = "home" | "analysis" | "tools" | "settings";

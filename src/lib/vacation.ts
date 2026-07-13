@@ -74,7 +74,7 @@ function countWeekdayOccurrences(minIso: string, maxIso: string, wd: number): nu
 /** Per-weekday roster profile derived from worked history. */
 export function buildWeekdayProfile(worked: Shift[]): WeekdayProfile[] {
   const blank: WeekdayProfile[] = Array.from({ length: 7 }, () => ({ p: 0, n: 0 }));
-  const ws = worked.filter((s) => s.status === "worked" && s.date);
+  const ws = worked.filter((s) => s.status === "worked" && s.date && s.shiftType !== "meeting");
   if (ws.length === 0) return blank;
 
   const dates = ws.map((s) => s.date).sort();
@@ -92,7 +92,10 @@ export function buildWeekdayProfile(worked: Shift[]): WeekdayProfile[] {
 
 /** Average distinct working-days per week across the worked history. */
 export function avgWorkingDaysPerWeek(worked: Shift[]): number {
-  const dates = worked.filter((s) => s.status === "worked" && s.date).map((s) => s.date).sort();
+  const dates = worked
+    .filter((s) => s.status === "worked" && s.date && s.shiftType !== "meeting")
+    .map((s) => s.date)
+    .sort();
   if (dates.length === 0) return 0;
   const spanDays =
     Math.abs(parseISO(dates[dates.length - 1]).getTime() - parseISO(dates[0]).getTime()) /

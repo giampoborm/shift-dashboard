@@ -37,6 +37,9 @@ describe("familyOf", () => {
     expect(familyOf("early-closing")).toBe("closing");
     expect(familyOf("closing")).toBe("closing");
   });
+  it("meeting is its own family", () => {
+    expect(familyOf("meeting")).toBe("meeting");
+  });
 });
 
 describe("weekdayIndexOf", () => {

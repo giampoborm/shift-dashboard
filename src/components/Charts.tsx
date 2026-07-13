@@ -32,6 +32,7 @@ const TYPE_COLOR: Record<ShiftType, string> = {
   "mid-day": "#fcd34d",
   "early-closing": "#fb923c",
   closing: "#c4b5fd",
+  meeting: "#94a3b8",
 };
 
 const eur = (n: number) => `€${n.toFixed(2)}`;

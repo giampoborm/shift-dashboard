@@ -106,8 +106,9 @@ export function classifyShiftType(slot: ParsedSlot): ShiftType {
   return "early-closing"; // 17:00, 18:00 with fixed end at/before midnight
 }
 
-/** Opening (morning) vs closing (evening) family. */
+/** Opening (morning) vs closing (evening) family; meeting is its own family (no tips). */
 export function familyOf(type: ShiftType): ShiftFamily {
+  if (type === "meeting") return "meeting";
   return type === "opening" || type === "late-morning" ? "opening" : "closing";
 }
 

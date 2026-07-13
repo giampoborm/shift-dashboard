@@ -5,16 +5,22 @@
 
 export type ShiftStatus = "planned" | "worked" | "swapped-out" | "swapped-in";
 
-/** Named shift types, classified from start time + open-end + past-midnight. */
+/**
+ * Named shift types. Five are classified from start time + open-end + past-midnight
+ * (floor work, derived from CSV import or a typed time slot); "meeting" is a sixth,
+ * manually-entered type (2h, ~once a month) that pays normal wage but has
+ * structurally no tips — it is never derived from time-slot parsing.
+ */
 export type ShiftType =
   | "opening" // start <= 11:00, ends ~18:00 (10:30 on Sat)
   | "late-morning" // 12:00-18:00
   | "mid-day" // 16:00-23:00
   | "early-closing" // 17-23, or Fri/Sat 18-00 (fixed end)
-  | "closing"; // 18/17-Ende, or worked past midnight
+  | "closing" // 18/17-Ende, or worked past midnight
+  | "meeting"; // manual, paid, no tips — excluded from tip/roster stats
 
-/** Coarse grouping: opening (morning) vs closing (evening) family. */
-export type ShiftFamily = "opening" | "closing";
+/** Coarse grouping: opening (morning) vs closing (evening) family; meeting is its own family. */
+export type ShiftFamily = "opening" | "closing" | "meeting";
 
 export interface Shift {
   id?: number;

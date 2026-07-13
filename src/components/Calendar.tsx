@@ -25,6 +25,7 @@ const TYPE_SHORT: Record<string, string> = {
   "mid-day": "mid",
   "early-closing": "e.close",
   closing: "close",
+  meeting: "meet",
 };
 
 export function Calendar(props: {

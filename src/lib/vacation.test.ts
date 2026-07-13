@@ -25,6 +25,21 @@ function shift(date: string, crossesMidnight = false): Shift {
   };
 }
 
+function meetingShift(date: string): Shift {
+  return {
+    date,
+    station: "BAR",
+    shiftType: "meeting",
+    openEnd: false,
+    crossesMidnight: false,
+    status: "worked",
+    actualHours: 2,
+    tips: undefined,
+    source: "test",
+    createdAt: "now",
+  };
+}
+
 describe("berlinHolidays", () => {
   it("includes Berlin-specific and national public holidays", () => {
     const dates = berlinHolidays("2026-01-01", "2026-12-31").map((h) => h.date);
@@ -74,6 +89,22 @@ describe("buildWeekdayProfile + estimateScheduledCost", () => {
     const cost = estimateScheduledCost("2026-06-26", "2026-06-26", profile);
     expect(cost.expected).toBeCloseTo(1); // night shift still = 1 day off
   });
+
+  it("excludes meeting shifts from the roster-frequency profile", () => {
+    // Same 3 Fridays as the real roster, plus a bunch of Monday meetings that
+    // should NOT make Monday look like a normal working day.
+    const worked = [
+      shift("2026-06-05"),
+      shift("2026-06-12"),
+      shift("2026-06-19"),
+      meetingShift("2026-06-08"),
+      meetingShift("2026-06-15"),
+      meetingShift("2026-06-22"),
+    ];
+    const profile = buildWeekdayProfile(worked);
+    expect(profile[5].p).toBeCloseTo(1); // Friday, unaffected
+    expect(profile[1].p).toBe(0); // Monday still 0 despite the meeting shifts
+  });
 });
 
 describe("proportional basis", () => {
@@ -86,6 +117,16 @@ describe("proportional basis", () => {
     // 4 days/week should convert 24 Werktage -> 16 actual working-days
     expect(proportionalEntitlement(24, 4)).toBeCloseTo(16);
     expect(proportionalEntitlement(24, 6)).toBeCloseTo(24);
+  });
+
+  it("meeting shifts don't inflate the average working-days/week", () => {
+    const worked = [shift("2026-06-05"), shift("2026-06-12"), shift("2026-06-19")];
+    const withMeetings = [
+      ...worked,
+      meetingShift("2026-06-08"),
+      meetingShift("2026-06-15"),
+    ];
+    expect(avgWorkingDaysPerWeek(withMeetings)).toBeCloseTo(avgWorkingDaysPerWeek(worked));
   });
 });
 

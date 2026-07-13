@@ -67,6 +67,10 @@ describe("bucketOf", () => {
     expect(bucketOf({ shiftType: "closing", date: "2026-06-13" })).toBe("evening"); // Sat
     expect(bucketOf({ shiftType: "closing", date: "2026-06-14" })).toBe("evening-sunday"); // Sun
   });
+  it("meeting always gets its own trivial bucket, regardless of weekday", () => {
+    expect(bucketOf({ shiftType: "meeting", date: "2026-06-09" })).toBe("meeting"); // Tue
+    expect(bucketOf({ shiftType: "meeting", date: "2026-06-14" })).toBe("meeting"); // Sun
+  });
 });
 
 describe("buildBucketStats (real history)", () => {
@@ -86,6 +90,26 @@ describe("buildBucketStats (real history)", () => {
     const sun = stats.get("evening-sunday")!;
     const eve = stats.get("evening")!;
     expect(sun.tips.median).toBeLessThan(eve.tips.median);
+  });
+
+  it("excludes meeting shifts from tip-bucket stats entirely", () => {
+    const meeting: Shift = {
+      date: "2026-06-09", // Tue
+      station: "BAR",
+      shiftType: "meeting",
+      openEnd: false,
+      crossesMidnight: false,
+      status: "worked",
+      actualHours: 2,
+      tips: undefined,
+      source: "test",
+      createdAt: "now",
+    };
+    const withMeeting = buildBucketStats([...worked(), meeting]);
+    const without = buildBucketStats(worked());
+    expect(withMeeting.get("meeting")).toBeUndefined();
+    // Doesn't leak into morning-weekday (Tuesday, opening family) either.
+    expect(withMeeting.get("morning-weekday")?.n).toBe(without.get("morning-weekday")?.n);
   });
 });
 
@@ -134,6 +158,29 @@ describe("estimateShift", () => {
     const recent = estimateShift(planned, w, DEFAULT_RATES, DEFAULT_PAYSLIPS, { ...settings, recencyHalfLifeDays: 30 }, undefined, asOf);
     expect(recent.usableTips.median).toBeLessThan(flat.usableTips.median);
     expect(recent.usableTips.p25).toBeLessThanOrEqual(recent.usableTips.p75); // still ordered
+  });
+
+  it("estimates a meeting shift with zero tips and normal wage, skipping the fallback chain", () => {
+    const w = worked();
+    const meeting: Shift = {
+      date: "2026-07-06", // future Monday
+      station: "BAR",
+      shiftType: "meeting",
+      openEnd: false,
+      crossesMidnight: false,
+      status: "planned",
+      actualHours: 2,
+      grossRate: 15.5,
+      source: "test",
+      createdAt: "now",
+    };
+    const e = estimateShift(meeting, w, DEFAULT_RATES, DEFAULT_PAYSLIPS, settings);
+    expect(e.bucket).toBe("meeting");
+    expect(e.hours).toBeCloseTo(2);
+    expect(e.usableTips).toEqual({ p25: 0, median: 0, p75: 0 });
+    expect(e.takeHome).toEqual({ p25: e.netWage, median: e.netWage, p75: e.netWage });
+    expect(e.netWage).toBeCloseTo(2 * 15.5 * e.netFactor);
+    expect(e.confident).toBe(true);
   });
 });
 

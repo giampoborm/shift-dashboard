@@ -103,6 +103,25 @@ describe("computeShiftEarnings", () => {
     );
     expect(e.grossPay).toBeCloseTo(7.5 * 15.5);
   });
+
+  it("a meeting shift earns normal wage but zero tips", () => {
+    const e = computeShiftEarnings(
+      shift({
+        date: "2026-04-02",
+        shiftType: "meeting",
+        actualHours: 2,
+        tips: undefined,
+        grossRate: 15.5,
+      }),
+      rates,
+      payslips,
+      settings,
+    );
+    expect(e.grossPay).toBeCloseTo(2 * 15.5); // normal wage math, nothing meeting-specific here
+    expect(e.usableTips).toBe(0);
+    expect(e.tipsPerHour).toBe(0); // reported tips (0) / hours — not null, since hours > 0
+    expect(e.takeHome).toBeCloseTo(e.netPay);
+  });
 });
 
 describe("sumEarnings", () => {

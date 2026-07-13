@@ -87,7 +87,14 @@ export function byType(
   payslips: Payslip[],
   settings: Pick<Settings, "tipPoolRate">,
 ): TypePoint[] {
-  const order: ShiftType[] = ["opening", "late-morning", "mid-day", "early-closing", "closing"];
+  const order: ShiftType[] = [
+    "opening",
+    "late-morning",
+    "mid-day",
+    "early-closing",
+    "closing",
+    "meeting",
+  ];
   const map = new Map<ShiftType, TypePoint>();
   for (const s of shifts) {
     if (s.status !== "worked") continue;

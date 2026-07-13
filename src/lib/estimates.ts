@@ -24,17 +24,20 @@ export type EstimateBucket =
   | "morning-weekday"
   | "morning-weekend"
   | "evening"
-  | "evening-sunday";
+  | "evening-sunday"
+  | "meeting"; // structurally no tips — never estimated via the bucket→family→all chain
 
 export const BUCKET_LABELS: Record<EstimateBucket, string> = {
   "morning-weekday": "Morning (Tue–Thu)",
   "morning-weekend": "Morning (Fri–Sun)",
   evening: "Evening",
   "evening-sunday": "Evening (Sun)",
+  meeting: "Meeting",
 };
 
-/** Which bucket a shift belongs to, from its type + weekday. */
+/** Which bucket a shift belongs to, from its type + weekday. Meeting has its own trivial bucket. */
 export function bucketOf(shift: Pick<Shift, "shiftType" | "date">): EstimateBucket {
+  if (shift.shiftType === "meeting") return "meeting";
   const family = familyOf(shift.shiftType);
   const wd = weekdayIndexOf(shift.date); // 0=Sun … 6=Sat
   if (family === "opening") {
@@ -132,6 +135,7 @@ export function buildBucketStats(worked: Shift[]): Map<EstimateBucket, BucketSta
   const groups = new Map<EstimateBucket, Shift[]>();
   for (const s of worked) {
     if (s.status !== "worked") continue;
+    if (s.shiftType === "meeting") continue; // pay-only, not representative of tip stats
     const b = bucketOf(s);
     (groups.get(b) ?? groups.set(b, []).get(b)!).push(s);
   }
@@ -185,6 +189,34 @@ export function estimateShift(
   // "off" path for ad-hoc callers, never the live app's normal case.
   const halfLife = settings.recencyHalfLifeDays ?? 0;
 
+  const hours =
+    shift.actualHours ??
+    plannedHours(shift.plannedStart, shift.plannedEnd, shift.openEnd, settings.closingTime) ??
+    bucketStats.get(bucket)?.medianHours ??
+    0;
+  const rate = shift.grossRate ?? rateForDate(shift.date, rates) ?? 0;
+  const { factor } = netFactorForMonth(shift.date.slice(0, 7), payslips);
+  const netFactor = factor ?? 1;
+  const netWage = hours * rate * netFactor;
+
+  // Meeting shifts have structurally no tips — never run them through the
+  // bucket→family→all fallback chain (that fallback assumes a tips-bearing type).
+  if (shift.shiftType === "meeting") {
+    const zero: Range = { p25: 0, median: 0, p75: 0 };
+    return {
+      bucket,
+      basis: "bucket",
+      n: 0,
+      hours,
+      rate,
+      netFactor,
+      netWage,
+      usableTips: zero,
+      takeHome: { p25: netWage, median: netWage, p75: netWage },
+      confident: true,
+    };
+  }
+
   // Tip range with fallback chain: bucket -> same family -> all worked.
   let basis: ShiftEstimate["basis"] = "bucket";
   let sample = worked.filter((s) => s.status === "worked" && bucketOf(s) === bucket);
@@ -197,23 +229,13 @@ export function estimateShift(
     }
   }
   if (sample.length < MIN_BUCKET_N) {
-    const all = worked.filter((s) => s.status === "worked");
+    const all = worked.filter((s) => s.status === "worked" && s.shiftType !== "meeting");
     if (all.length > sample.length) {
       sample = all;
       basis = "all";
     }
   }
   const tipRange = tipRangeFor(sample, asOf, halfLife);
-
-  const hours =
-    shift.actualHours ??
-    plannedHours(shift.plannedStart, shift.plannedEnd, shift.openEnd, settings.closingTime) ??
-    bucketStats.get(bucket)?.medianHours ??
-    0;
-  const rate = shift.grossRate ?? rateForDate(shift.date, rates) ?? 0;
-  const { factor } = netFactorForMonth(shift.date.slice(0, 7), payslips);
-  const netFactor = factor ?? 1;
-  const netWage = hours * rate * netFactor;
 
   const cut = 1 - settings.tipPoolRate;
   const usableTips: Range = {

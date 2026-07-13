@@ -36,9 +36,12 @@ export function ShiftEditor(props: {
   const [station, setStation] = useState(shift?.station ?? prefill?.station ?? stations[0] ?? "BAR");
   const [slot, setSlot] = useState(initialSlot);
   const [status, setStatus] = useState<ShiftStatus>(shift?.status ?? prefill?.status ?? "planned");
-  const [hours, setHours] = useState(shift?.actualHours != null ? String(shift.actualHours) : "");
+  const [hours, setHours] = useState(
+    shift?.actualHours != null ? String(shift.actualHours) : shift?.shiftType === "meeting" ? "2" : "",
+  );
   const [tips, setTips] = useState(shift?.tips != null ? String(shift.tips) : "");
   const [notes, setNotes] = useState(shift?.notes ?? "");
+  const [isMeeting, setIsMeeting] = useState(shift?.shiftType === "meeting");
   const [error, setError] = useState("");
 
   function buildRecord(): Omit<Shift, "id"> | null {
@@ -46,15 +49,40 @@ export function ShiftEditor(props: {
       setError("Date is required.");
       return null;
     }
-    const closingMinutes = parseTimeToken(settings.closingTime) ?? 60;
-    const parsed = slot.trim() ? parseTimeSlot(slot.trim(), closingMinutes) : null;
-    const shiftType = parsed ? classifyShiftType(parsed) : shift?.shiftType ?? "closing";
     const h = hours.trim() === "" ? undefined : Number(hours);
-    const t = tips.trim() === "" ? undefined : Number(tips);
     if (h != null && !Number.isFinite(h)) {
       setError("Hours must be a number.");
       return null;
     }
+
+    const closingMinutes = parseTimeToken(settings.closingTime) ?? 60;
+
+    // Meeting: logs a real start/end time like any shift, but always classifies as
+    // "meeting" (never reclassified from the time slot) and never has tips —
+    // obviously, it's a meeting, not floor work.
+    if (isMeeting) {
+      const parsed = slot.trim() ? parseTimeSlot(slot.trim(), closingMinutes) : null;
+      return {
+        date,
+        station: station.trim() || "BAR",
+        shiftType: "meeting",
+        plannedStart: parsed?.start ?? shift?.plannedStart,
+        plannedEnd: parsed?.openEnd ? undefined : parsed?.end ?? shift?.plannedEnd,
+        openEnd: parsed?.openEnd ?? shift?.openEnd ?? false,
+        crossesMidnight: parsed?.crossesMidnight ?? shift?.crossesMidnight ?? false,
+        status,
+        actualHours: h ?? 2,
+        tips: undefined,
+        grossRate: rateForDate(date, rates) ?? shift?.grossRate,
+        notes: notes.trim() || undefined,
+        source: shift?.source ?? "manual",
+        createdAt: shift?.createdAt ?? new Date().toISOString(),
+      };
+    }
+
+    const parsed = slot.trim() ? parseTimeSlot(slot.trim(), closingMinutes) : null;
+    const shiftType = parsed ? classifyShiftType(parsed) : shift?.shiftType ?? "closing";
+    const t = tips.trim() === "" ? undefined : Number(tips);
     if (t != null && !Number.isFinite(t)) {
       setError("Tips must be a number.");
       return null;
@@ -113,6 +141,22 @@ export function ShiftEditor(props: {
           <input list="stations" value={station} onChange={(e) => setStation(e.target.value)} />
           <datalist id="stations">{stations.map((s) => <option key={s} value={s} />)}</datalist>
         </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={isMeeting}
+            onChange={(e) => {
+              const checked = e.target.checked;
+              setIsMeeting(checked);
+              if (checked) {
+                setHours((h) => (h.trim() === "" ? "2" : h));
+                setSlot((s) => (s.trim() === "" ? "13:00-15:00" : s));
+                setTips("");
+              }
+            }}
+          />
+          Meeting <span className="muted">(no tips — paid, not floor work)</span>
+        </label>
         <label>Slot <span className="muted">(e.g. 18:00-Ende, 11-18)</span>
           <input value={slot} onChange={(e) => setSlot(e.target.value)} placeholder="18:00-Ende" />
         </label>
@@ -125,9 +169,11 @@ export function ShiftEditor(props: {
           <label>Hours worked
             <input value={hours} onChange={(e) => setHours(e.target.value)} placeholder="6.5" inputMode="decimal" />
           </label>
-          <label>Tips (€)
-            <input value={tips} onChange={(e) => setTips(e.target.value)} placeholder="60" inputMode="decimal" />
-          </label>
+          {!isMeeting && (
+            <label>Tips (€)
+              <input value={tips} onChange={(e) => setTips(e.target.value)} placeholder="60" inputMode="decimal" />
+            </label>
+          )}
         </div>
         <label>Notes
           <input value={notes} onChange={(e) => setNotes(e.target.value)} />

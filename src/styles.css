@@ -464,6 +464,7 @@ tbody tr:hover { background: var(--panel-2); }
 .tag.mid-day { color: #b45309; }
 .tag.early-closing { color: #c2410c; }
 .tag.closing { color: #6d28d9; }
+.tag.meeting { color: #64748b; }
 .tag.planned { color: #b45309; }
 .tag.worked { color: #15803d; }
 .pos { color: var(--text); font-weight: 700; }
@@ -528,6 +529,8 @@ tr.dim td { text-decoration: line-through; }
   font-size: 0.9rem;
 }
 .modal .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+.modal .checkbox-row { flex-direction: row; align-items: center; gap: 0.4rem; }
+.modal .checkbox-row input[type="checkbox"] { width: auto; }
 .modal .err { color: var(--bad); font-size: 0.8rem; margin: 0 0 0.5rem; }
 .modal-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.5rem; }
 button.danger { color: var(--bad); border-color: var(--bad); }
@@ -590,6 +593,7 @@ button.danger:hover { background: var(--bad); color: #fff; }
 .cal-chip.mid-day { --chip: #b45309; }
 .cal-chip.early-closing { --chip: #c2410c; }
 .cal-chip.closing { --chip: #6d28d9; }
+.cal-chip.meeting { --chip: #64748b; }
 /* worked = filled chip (type colour bg, white text); planned = outline */
 .cal-chip.st-worked { background: var(--chip); color: #fff; border-color: transparent; font-weight: 700; }
 .cal-chip.st-swapped-out, .cal-chip.st-swapped-in { opacity: 0.5; text-decoration: line-through; }
