@@ -1,25 +1,29 @@
 import { describe, it, expect } from "vitest";
 import {
+  avgGrossPerWorkedDay,
   avgWorkingDaysPerWeek,
   berlinHolidays,
   buildWeekdayProfile,
   calcVacation,
   countWerktage,
   estimateScheduledCost,
+  estimateVacationPay,
+  estimateVacationPayDays,
   proportionalEntitlement,
 } from "./vacation";
-import type { Shift } from "./types";
+import type { GrossRate, Payslip, Shift } from "./types";
 
-function shift(date: string, crossesMidnight = false): Shift {
+function shift(date: string, crossesMidnight = false, status: Shift["status"] = "worked"): Shift {
   return {
     date,
     station: "BAR",
     shiftType: "closing",
     openEnd: false,
     crossesMidnight,
-    status: "worked",
+    status,
     actualHours: 6,
     tips: 50,
+    grossRate: 15,
     source: "test",
     createdAt: "now",
   };
@@ -139,5 +143,96 @@ describe("calcVacation", () => {
     expect(c.arbeitstage).toBe(5);
     expect(c.scheduleCost.low).toBeLessThanOrEqual(c.scheduleCost.expected);
     expect(c.scheduleCost.expected).toBeLessThanOrEqual(c.scheduleCost.high);
+  });
+});
+
+describe("avgGrossPerWorkedDay", () => {
+  const rates: GrossRate[] = [{ effectiveFrom: "2026-01-01", rate: 15 }];
+
+  it("averages recent worked shifts within the trailing window", () => {
+    const worked = [shift("2026-06-05"), shift("2026-06-12"), shift("2026-06-19")]; // 6h * 15 = 90 each
+    expect(avgGrossPerWorkedDay(worked, rates, "2026-06-26")).toBeCloseTo(90);
+  });
+
+  it("falls back to all history when the trailing window is empty", () => {
+    const worked = [shift("2020-01-03")]; // long before the window
+    expect(avgGrossPerWorkedDay(worked, rates, "2026-06-26")).toBeCloseTo(90);
+  });
+
+  it("returns 0 with no worked history", () => {
+    expect(avgGrossPerWorkedDay([], rates, "2026-06-26")).toBe(0);
+  });
+});
+
+describe("estimateVacationPay", () => {
+  const rates: GrossRate[] = [{ effectiveFrom: "2026-01-01", rate: 15 }];
+  const payslips: Payslip[] = [{ month: "2026-08", totalGross: 1000, totalHours: 100, totalNet: 800 }];
+  // Friday-only roster, 3 samples.
+  const worked = [shift("2026-06-05"), shift("2026-06-12"), shift("2026-06-19")];
+
+  it("with no plan yet, costs the full profile-expected days", () => {
+    // A single Friday away, nothing on the roster for it.
+    const est = estimateVacationPay("2026-08-07", "2026-08-07", worked, [], rates, payslips);
+    expect(est.days).toBeCloseTo(1);
+    expect(est.avgDayGross).toBeCloseTo(90);
+    expect(est.gross).toBeCloseTo(90);
+    expect(est.net).toBeCloseTo(90 * 0.8); // payslip net factor
+  });
+
+  it("a shift still on the roster in the range offsets the estimate", () => {
+    // Away Mon–Sun, but a Friday shift is already planned within it => not vacation.
+    const stillRostered = [shift("2026-08-07", false, "planned")]; // Friday
+    const est = estimateVacationPay("2026-08-03", "2026-08-09", worked, stillRostered, rates, payslips);
+    expect(est.days).toBeCloseTo(0);
+    expect(est.gross).toBe(0);
+  });
+
+  it("swapped-out shifts in range don't count as still-rostered", () => {
+    const swappedOut = [shift("2026-08-07", false, "swapped-out")];
+    const est = estimateVacationPay("2026-08-07", "2026-08-07", worked, swappedOut, rates, payslips);
+    expect(est.days).toBeCloseTo(1);
+  });
+
+  it("returns zero for an inverted range", () => {
+    expect(estimateVacationPay("2026-08-10", "2026-08-01", worked, [], rates, payslips).days).toBe(0);
+  });
+});
+
+describe("estimateVacationPayDays", () => {
+  // Friday-only roster, 3 samples.
+  const worked = [shift("2026-06-05"), shift("2026-06-12"), shift("2026-06-19")];
+
+  it("names the specific missing-Friday date, not the whole week", () => {
+    const days = estimateVacationPayDays("2026-08-03", "2026-08-09", worked, []);
+    expect(days.map((d) => d.date)).toEqual(["2026-08-07"]); // the Friday
+  });
+
+  it("excludes a date that's still on the roster", () => {
+    const stillRostered = [shift("2026-08-07", false, "planned")];
+    const days = estimateVacationPayDays("2026-08-03", "2026-08-09", worked, stillRostered);
+    expect(days).toEqual([]);
+  });
+
+  it("a swapped-out date on the Friday still counts as paid vacation", () => {
+    const swappedOut = [shift("2026-08-07", false, "swapped-out")];
+    const days = estimateVacationPayDays("2026-08-03", "2026-08-09", worked, swappedOut);
+    expect(days.map((d) => d.date)).toEqual(["2026-08-07"]);
+  });
+
+  it("doesn't flag every weekday that individually clears 50% — caps at the real weekly average", () => {
+    // Mon/Tue/Wed each worked exactly half their occurrences (p = 0.5 apiece) —
+    // an independent per-day >=50% cutoff would flag all 3; the true combined
+    // expectation is 1.5 => rounds to 2, so only the top 2 (tie-broken by date)
+    // should come back.
+    const mixed = [
+      shift("2026-06-01"), // Mon
+      shift("2026-06-08"), // Mon
+      shift("2026-06-09"), // Tue
+      shift("2026-06-16"), // Tue
+      shift("2026-06-17"), // Wed
+      shift("2026-06-24"), // Wed
+    ];
+    const days = estimateVacationPayDays("2026-06-29", "2026-07-01", mixed, []); // Mon, Tue, Wed
+    expect(days.map((d) => d.date)).toEqual(["2026-06-29", "2026-06-30"]); // Mon + Tue, not Wed
   });
 });

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { addMonths, format, startOfMonth, subMonths } from "date-fns";
+import { addMonths, endOfMonth, format, startOfMonth, subMonths } from "date-fns";
 import { db, ensureSeeded, getSettings } from "./lib/db";
 import { importHistoryCsv, type ImportWarning } from "./lib/importHistory";
 import { importPlanCsv, plannedHours } from "./lib/importPlan";
@@ -10,6 +10,7 @@ import { formatDate, formatDateShort } from "./lib/format";
 import { shiftsToCsv, downloadText } from "./lib/exportCsv";
 import { estimateShift, sumEstimates, type Range } from "./lib/estimates";
 import { nextShiftFrom, shiftsInMonth } from "./lib/period";
+import { estimateVacationPay } from "./lib/vacationPay";
 import { reconcileMonth } from "./lib/reconcile";
 import { consumeAuthRedirect, isConfigured, sync, syncOnOpen } from "./lib/driveSync";
 import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
@@ -260,7 +261,10 @@ export function App() {
         />
       ) : room === "tools" ? (
         <Tools
+          allShifts={allShifts!}
           worked={workedHistory}
+          rates={rates!}
+          payslips={payslips!}
           settings={settings!}
           lastImport={lastImport}
           warnings={warnings}
@@ -359,17 +363,42 @@ function Home(props: {
     const slip = recon?.slip.useSlipTotals ? recon.slip : null;
     const bankedGross = slip ? slip.totalGross : banked.grossPay;
     const bankedNet = slip ? slip.totalNet : banked.netPay;
+
+    // Vacation days generate no `planned` shift rows, so sumEstimates above never
+    // sees them — add a light estimate of the paid-vacation gap for any recorded
+    // vacation overlapping this month (clipped to month bounds). See vacationPay.ts.
+    // Skipped once the payslip is authoritative for this month (`slip` set above):
+    // the real totalGross/totalNet already include whatever the employer actually
+    // paid for those days, so adding our guess on top would double-count it. This
+    // is how the estimate "resolves itself" once the payslip lands — no manual redo.
+    const monthStartIso = format(cursor, "yyyy-MM-dd");
+    const monthEndIso = format(endOfMonth(cursor), "yyyy-MM-dd");
+    let vacGross = 0;
+    let vacNet = 0;
+    if (!slip) {
+      for (const v of vacations) {
+        if (v.to < monthStartIso || v.from > monthEndIso) continue;
+        const clipFrom = v.from > monthStartIso ? v.from : monthStartIso;
+        const clipTo = v.to < monthEndIso ? v.to : monthEndIso;
+        const inRange = allShifts.filter((s) => s.date >= clipFrom && s.date <= clipTo);
+        const est = estimateVacationPay(clipFrom, clipTo, worked, inRange, rates, payslips);
+        vacGross += est.gross;
+        vacNet += est.net;
+      }
+    }
+
     // One row per money category, each split into what's banked (worked actuals) vs
-    // projected (planned estimates) — the actual-vs-estimate blend, made visible.
+    // projected (planned estimates + any estimated paid-vacation days) — the
+    // actual-vs-estimate blend, made visible.
     return {
       workedCount: workedM.length,
       plannedCount: plannedM.length,
-      takeHome: { banked: bankedNet + banked.usableTips, projected: projected.takeHome.median },
-      gross: { banked: bankedGross, projected: projected.grossWage },
-      net: { banked: bankedNet, projected: projected.netWage },
+      takeHome: { banked: bankedNet + banked.usableTips, projected: projected.takeHome.median + vacNet },
+      gross: { banked: bankedGross, projected: projected.grossWage + vacGross },
+      net: { banked: bankedNet, projected: projected.netWage + vacNet },
       tips: { banked: banked.usableTips, projected: projected.usableTips.median },
     };
-  }, [allShifts, cursor, worked, rates, payslips, settings, recon]);
+  }, [allShifts, cursor, worked, rates, payslips, settings, recon, vacations]);
 
   return (
     <div className="room home">
@@ -574,7 +603,10 @@ function Analysis(props: {
 // the shift optimizer. Plus import warnings, which belong with the import action.
 // ─────────────────────────────────────────────────────────────────────────────
 function Tools(props: {
+  allShifts: Shift[];
   worked: Shift[];
+  rates: GrossRate[];
+  payslips: Payslip[];
   settings: Settings;
   lastImport: string;
   warnings: ImportWarning[];
@@ -583,7 +615,7 @@ function Tools(props: {
   onImportPlan: () => void;
   onClear: () => void;
 }) {
-  const { worked, settings, lastImport, warnings, hasShifts, onImportHistory, onImportPlan, onClear } = props;
+  const { allShifts, worked, rates, payslips, settings, lastImport, warnings, hasShifts, onImportHistory, onImportPlan, onClear } = props;
   const warns = warnings.filter((w) => w.severity === "warn");
   const infos = warnings.filter((w) => w.severity === "info");
 
@@ -623,7 +655,7 @@ function Tools(props: {
       )}
 
       <Suspense fallback={<div className="empty">Loading…</div>}>
-        <VacationPlanner worked={worked} settings={settings} />
+        <VacationPlanner worked={worked} allShifts={allShifts} rates={rates} payslips={payslips} settings={settings} />
       </Suspense>
 
       <div className="card">

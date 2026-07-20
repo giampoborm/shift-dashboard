@@ -10,10 +10,16 @@
 //     A midnight-crossing night shift counts as 2 working days.
 //
 // The pure functions take plain inputs; berlinHolidays() wraps the date-holidays dep.
+// Holidays-independent math (roster profile, proportional cost, pay estimate) lives in
+// vacationPay.ts, kept dep-free so App.tsx can use it without pulling date-holidays out
+// from behind VacationPlanner's lazy-load boundary. Re-exported here for convenience.
 
 import Holidays from "date-holidays";
 import { eachDayOfInterval, format, getDay, parseISO } from "date-fns";
 import type { Shift } from "./types";
+import { avgWorkingDaysPerWeek, buildWeekdayProfile, estimateScheduledCost } from "./vacationPay";
+
+export * from "./vacationPay";
 
 export interface Holiday {
   date: string; // ISO yyyy-MM-dd
@@ -58,90 +64,12 @@ export function countWerktage(
   return c;
 }
 
-export interface WeekdayProfile {
-  p: number; // probability the user is scheduled that weekday (0..1)
-  n: number; // distinct dates worked on that weekday (sample size)
-}
-
-function countWeekdayOccurrences(minIso: string, maxIso: string, wd: number): number {
-  let c = 0;
-  for (const d of eachDayOfInterval({ start: parseISO(minIso), end: parseISO(maxIso) })) {
-    if (getDay(d) === wd) c += 1;
-  }
-  return c;
-}
-
-/** Per-weekday roster profile derived from worked history. */
-export function buildWeekdayProfile(worked: Shift[]): WeekdayProfile[] {
-  const blank: WeekdayProfile[] = Array.from({ length: 7 }, () => ({ p: 0, n: 0 }));
-  const ws = worked.filter((s) => s.status === "worked" && s.date && s.shiftType !== "meeting");
-  if (ws.length === 0) return blank;
-
-  const dates = ws.map((s) => s.date).sort();
-  const minIso = dates[0];
-  const maxIso = dates[dates.length - 1];
-
-  for (let wd = 0; wd < 7; wd++) {
-    const distinctDates = new Set(ws.filter((s) => getDay(parseISO(s.date)) === wd).map((s) => s.date));
-    const occ = countWeekdayOccurrences(minIso, maxIso, wd);
-    // A scheduled day costs ONE vacation day regardless of crossing midnight.
-    blank[wd] = { p: occ > 0 ? Math.min(1, distinctDates.size / occ) : 0, n: distinctDates.size };
-  }
-  return blank;
-}
-
-/** Average distinct working-days per week across the worked history. */
-export function avgWorkingDaysPerWeek(worked: Shift[]): number {
-  const dates = worked
-    .filter((s) => s.status === "worked" && s.date && s.shiftType !== "meeting")
-    .map((s) => s.date)
-    .sort();
-  if (dates.length === 0) return 0;
-  const spanDays =
-    Math.abs(parseISO(dates[dates.length - 1]).getTime() - parseISO(dates[0]).getTime()) /
-      86_400_000 +
-    1;
-  return new Set(dates).size / (spanDays / 7);
-}
-
-/**
- * Proportional (BAG) entitlement: convert the Werktage budget to the user's
- * actual working-day basis. 24 Werktage @ 6-day week → 24 × daysPerWeek / 6.
- */
-export function proportionalEntitlement(werktageBudget: number, daysPerWeek: number): number {
-  return (werktageBudget * daysPerWeek) / 6;
-}
-
-export interface ScheduleCost {
-  expected: number; // expected scheduled shifts the vacation costs
-  low: number; // expected − 1 sd (clamped at 0)
-  high: number; // expected + 1 sd
-}
-
-/** Estimate the scheduled-shift cost range of a vacation from the roster profile. */
-export function estimateScheduledCost(
-  fromIso: string,
-  toIso: string,
-  profile: WeekdayProfile[],
-): ScheduleCost {
-  if (toIso < fromIso) return { expected: 0, low: 0, high: 0 };
-  let expected = 0;
-  let variance = 0;
-  for (const d of eachDayOfInterval({ start: parseISO(fromIso), end: parseISO(toIso) })) {
-    const { p } = profile[getDay(d)];
-    expected += p;
-    variance += p * (1 - p); // Bernoulli spread
-  }
-  const sd = Math.sqrt(variance);
-  return { expected, low: Math.max(0, expected - sd), high: expected + sd };
-}
-
 export interface VacationCalc {
   calendarDays: number;
   werktage: number; // Werktage-basis cost vs the 24 budget
   arbeitstage: number; // Mon–Fri minus holidays
   holidays: Holiday[];
-  scheduleCost: ScheduleCost; // proportional-basis cost (scheduled shifts)
+  scheduleCost: ReturnType<typeof estimateScheduledCost>; // proportional-basis cost (scheduled shifts)
   daysPerWeek: number; // avg working-days/week from history
 }
 

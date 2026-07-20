@@ -14,8 +14,9 @@ import {
   startOfMonth,
   startOfWeek,
 } from "date-fns";
-import { computeShiftEarnings } from "../lib/earnings";
+import { computeShiftEarnings, netFactorForMonth } from "../lib/earnings";
 import { estimateShift } from "../lib/estimates";
+import { avgGrossPerWorkedDay, estimateVacationPayDays } from "../lib/vacationPay";
 import type { GrossRate, Payslip, Settings, Shift, Vacation } from "../lib/types";
 
 const WEEK_HEADERS = ["M", "T", "W", "T", "F", "S", "S"];
@@ -66,6 +67,21 @@ export function Calendar(props: {
     return vacations?.find((v) => iso >= v.from && iso <= v.to);
   }
 
+  // Which specific dates within recorded vacations are estimated PAID (a day
+  // you'd normally be rostered but that's gone from the plan) + their estimated
+  // €, so the calendar can show the same forward guess VacationPlanner totals.
+  const paidVacationDays = useMemo(() => {
+    const map = new Map<string, number>(); // date -> estimated net €
+    for (const v of vacations ?? []) {
+      const avgDayGross = avgGrossPerWorkedDay(worked, rates, v.to);
+      for (const day of estimateVacationPayDays(v.from, v.to, worked, shifts)) {
+        const { factor } = netFactorForMonth(day.date.slice(0, 7), payslips);
+        map.set(day.date, avgDayGross * (factor ?? 1));
+      }
+    }
+    return map;
+  }, [vacations, worked, shifts, rates, payslips]);
+
   // Per-day take-home and the tip slice of it (worked actuals, else estimated median).
   function dayMoney(list: Shift[]): { takeHome: number; tips: number } {
     let takeHome = 0;
@@ -105,6 +121,7 @@ export function Calendar(props: {
           const money = dayMoney(list);
           const out = !isSameMonth(d, cursor);
           const vac = vacationOn(iso);
+          const paidVacEur = paidVacationDays.get(iso);
           return (
             <div
               key={iso}
@@ -114,8 +131,12 @@ export function Calendar(props: {
             >
               <div className="cal-daynum">{format(d, "d")}</div>
               {vac && (
-                <div className="cal-vacation" title={vac.note ?? "vacation"}>
-                  vacation{vac.note ? `: ${vac.note}` : ""}
+                <div
+                  className={`cal-vacation${paidVacEur != null ? " paid" : ""}`}
+                  title={vac.note ?? "vacation"}
+                >
+                  {paidVacEur != null ? `paid vac. ~€${Math.round(paidVacEur)}` : "vacation"}
+                  {vac.note ? ` · ${vac.note}` : ""}
                 </div>
               )}
               {list.map((s) => (
@@ -142,7 +163,7 @@ export function Calendar(props: {
         })}
       </div>
       <p className="muted" style={{ fontSize: "0.76rem" }}>
-        Solid chip = worked · outlined = planned · struck = swapped. Day total = take-home (worked actuals, else estimated median); <em>tips</em> is the tip slice of it.
+        Solid chip = worked · outlined = planned · struck = swapped. Day total = take-home (worked actuals, else estimated median); <em>tips</em> is the tip slice of it. Within a recorded vacation, "paid vac." marks days you'd normally be rostered but aren't (a plan-vs-history guess) — plain "vacation" days aren't estimated as paid.
       </p>
     </div>
   );

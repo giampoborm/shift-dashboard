@@ -7,9 +7,9 @@
 import { useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../lib/db";
-import { calcVacation, proportionalEntitlement } from "../lib/vacation";
+import { calcVacation, estimateVacationPay, proportionalEntitlement } from "../lib/vacation";
 import { formatDate } from "../lib/format";
-import type { Settings, Shift } from "../lib/types";
+import type { GrossRate, Payslip, Settings, Shift } from "../lib/types";
 
 function addDaysIso(iso: string, n: number): string {
   const d = new Date(iso + "T00:00");
@@ -20,14 +20,28 @@ const r1 = (n: number) => Math.round(n * 10) / 10;
 const rng = (a: number, b: number) =>
   Math.round(a) === Math.round(b) ? `${Math.round(a)}` : `${Math.round(a)}–${Math.round(b)}`;
 
-export function VacationPlanner(props: { worked: Shift[]; settings: Settings }) {
-  const { worked, settings } = props;
+export function VacationPlanner(props: {
+  worked: Shift[];
+  allShifts: Shift[];
+  rates: GrossRate[];
+  payslips: Payslip[];
+  settings: Settings;
+}) {
+  const { worked, allShifts, rates, payslips, settings } = props;
   const today = new Date().toISOString().slice(0, 10);
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(addDaysIso(today, 13));
   const [note, setNote] = useState("");
 
   const calc = useMemo(() => calcVacation(from, to, worked), [from, to, worked]);
+
+  // Shifts still on the roster within the draft range — an already-imported plan
+  // (e.g. a partial week) offsets how many days count as paid vacation.
+  const payEst = useMemo(() => {
+    if (to < from) return null;
+    const inRange = allShifts.filter((s) => s.date >= from && s.date <= to);
+    return estimateVacationPay(from, to, worked, inRange, rates, payslips);
+  }, [from, to, worked, allShifts, rates, payslips]);
 
   const vacations = useLiveQuery(() => db.vacations.orderBy("from").toArray(), []) ?? [];
   const year = new Date().getFullYear();
@@ -96,12 +110,28 @@ export function VacationPlanner(props: { worked: Shift[]; settings: Settings }) 
             />
             <Card label="Werktage" value={String(calc.werktage)} sub="vs your 24" />
             <Card label="Arbeitstage" value={String(calc.arbeitstage)} sub="Mon–Fri basis" />
+            {payEst && payEst.days > 0 && (
+              <Card
+                label="Est. paid vacation"
+                value={`${r1(payEst.days)} d`}
+                sub={`~€${Math.round(payEst.net)} net`}
+                accent
+              />
+            )}
           </div>
 
           <p className="muted" style={{ fontSize: "0.8rem" }}>
             Counting rule is an assumption from your contract (§8) — confirm the basis your
             employer actually uses. A midnight-crossing shift counts as one vacation day.
           </p>
+          {payEst && payEst.days > 0 && (
+            <p className="muted" style={{ fontSize: "0.8rem" }}>
+              Paid-vacation estimate: days your usual roster minus what's still actually
+              scheduled in this range (from any imported plan), × your recent average day's
+              gross (€{r1(payEst.avgDayGross)}). A light forward guess — the payslip settles it
+              for real once it arrives.
+            </p>
+          )}
 
           {calc.holidays.length > 0 && (
             <p className="muted" style={{ fontSize: "0.8rem" }}>

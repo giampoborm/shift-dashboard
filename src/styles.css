@@ -609,6 +609,7 @@ button.danger:hover { background: var(--bad); color: #fff; }
   text-overflow: ellipsis;
   margin-top: 2px;
 }
+.cal-vacation.paid { color: #047857; }
 
 @media (max-width: 560px) {
   .cal-cell { min-height: 66px; }
