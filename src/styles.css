@@ -721,3 +721,43 @@ button.linklike:hover { background: none; color: var(--text); }
 .chart-head { display: flex; align-items: baseline; gap: 0.5rem; margin-bottom: 0.4rem; flex-wrap: wrap; }
 .chart-title { font-size: 0.86rem; font-weight: 700; }
 .chart-sub { font-size: 0.72rem; color: var(--muted); }
+
+/* Insights — the actionable readouts at the top of Analysis. */
+.insights {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+.card.insight { display: flex; flex-direction: column; gap: 0.15rem; }
+.card.insight .sub { margin-bottom: 0.5rem; }
+
+/* 1 — €/hour ranking bars */
+.rank { display: flex; flex-direction: column; gap: 0.7rem; }
+.rank-head { display: flex; justify-content: space-between; align-items: baseline; }
+.rank-name { font-weight: 700; font-size: 0.86rem; }
+.rank-val { font-weight: 800; font-size: 1.05rem; letter-spacing: -0.02em; }
+.rank-val .per { font-weight: 600; font-size: 0.72rem; color: var(--muted); margin-left: 1px; }
+.rank-bar {
+  display: flex; height: 12px; margin: 0.25rem 0 0.2rem;
+  border-radius: 6px; overflow: hidden; min-width: 8px;
+  background: var(--panel-2);
+}
+.rank-bar .seg { display: block; height: 100%; }
+.rank-bar .seg.wage { background: var(--text); }
+.rank-bar .seg.tips { background: #16a34a; }
+.rank-foot { font-size: 0.72rem; }
+.rank-legend { display: flex; gap: 1rem; font-size: 0.72rem; margin-top: 0.1rem; }
+.rank-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
+.rank-legend .dot.wage { background: var(--text); }
+.rank-legend .dot.tips { background: #16a34a; }
+
+/* 6 — tip drift watch */
+.drift { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.3rem; }
+.drift-row { display: grid; grid-template-columns: 1fr auto auto; align-items: baseline; gap: 0.6rem; }
+.drift-name { font-weight: 700; font-size: 0.82rem; }
+.drift-nums { font-size: 0.76rem; }
+.drift-delta { font-weight: 800; font-size: 0.86rem; color: var(--muted); text-align: right; min-width: 3.2rem; }
+.drift-delta.down { color: var(--bad); }
+.drift-delta.up { color: #16a34a; }
+.drift-note { font-size: 0.68rem; font-weight: 600; color: var(--muted); text-align: right; min-width: 3.2rem; }

@@ -16,6 +16,7 @@ import { consumeAuthRedirect, isConfigured, sync, syncOnOpen } from "./lib/drive
 import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
 import { ReconcilePopup } from "./components/ReconcilePopup";
 import { Calendar } from "./components/Calendar";
+import { Insights } from "./components/Insights";
 import { Settings as SettingsPanel } from "./components/Settings";
 import type { GrossRate, Payslip, Settings, Shift, ShiftType, Vacation } from "./lib/types";
 
@@ -574,6 +575,11 @@ function Analysis(props: {
           Export CSV
         </button>
       </div>
+
+      {/* Altitude 0 — the actionable readouts: what a shift really pays, and
+          whether tips are eroding. Stands on full history, so it is deliberately
+          independent of the range tabs above. */}
+      <Insights worked={worked} rates={rates} payslips={payslips} settings={settings} />
 
       {/* Altitude 1 — graphs (the patterns / insight). */}
       <Suspense fallback={<div className="empty">Loading charts…</div>}>
