@@ -93,8 +93,9 @@ at different altitudes recurs throughout.
 - **Vacation optimizer** — inverse of the calculator: "I want ~7 days off in August → which
   window costs the fewest scheduled shifts and bridges the most public holidays?" Slide a
   window across the calendar, rank by calendar-days-off ÷ scheduled-shifts-spent, snap to holidays.
-- **Station (BAR vs runner) as a tip signal** — candidate new bucket dimension for the estimate
-  engine; needs a data check first to confirm station actually moves tips before building it.
+- ~~Station (BAR vs runner) as a tip signal~~ — **ruled out (2026-07-20).** The user only ever
+  works as a bartender, never a runner, so station carries no tip signal and is not an estimate
+  dimension. (Tips-absent shifts like "meeting" are handled separately by shift type, not station.)
 
 ## ⚪ Backlog (Tier 3 — nice-to-have)
 

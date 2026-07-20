@@ -58,7 +58,9 @@ One **Shift** entity with a lifecycle: `planned → worked (confirmed) → [swap
 ```
 Shift {
   id, date, weekday(derived)
-  station            # BAR, runner, etc. — from the plan block header; affects tips
+  station            # from the plan block header. NOT a tip signal — the user only ever
+                     # bartends (never runner), so station is constant for his shifts. Kept for
+                     # import provenance/filtering only; the estimate engine ignores it.
   shiftType          # derived from time slot (early/late/night)
   plannedStart/End
   status             # planned | worked | swapped-out | swapped-in
