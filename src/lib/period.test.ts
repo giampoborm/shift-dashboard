@@ -74,3 +74,10 @@ describe("nextShiftFrom", () => {
     expect(nextShiftFrom([mk("2026-06-01", "worked"), mk("2026-05-01", "swapped-out")], today)).toBeNull();
   });
 });
+
+describe("nextShiftFrom with sick days", () => {
+  it("skips a sick day — it is settled, not a pending obligation", () => {
+    const list = [mk("2026-06-10", "sick"), mk("2026-06-14", "planned")];
+    expect(nextShiftFrom(list, new Date("2026-06-12T00:00"))?.date).toBe("2026-06-14");
+  });
+});

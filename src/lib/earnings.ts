@@ -11,6 +11,18 @@
 
 import type { GrossRate, Payslip, Settings, Shift, ShiftEarnings } from "./types";
 
+/**
+ * Statuses that put money in your pocket: a shift you worked, or one you were
+ * rostered for and missed sick (Entgeltfortzahlung keeps the wage running).
+ * Use this — never a bare `status === "worked"` — wherever a MONTH'S PAY is
+ * totalled (month cards, payslip reconciliation). Everywhere tips or per-hour
+ * performance is measured, keep filtering strictly to "worked": a sick day has
+ * no tips and its hours were never actually stood, so it would drag the stats.
+ */
+export function isPaidShift(shift: Pick<Shift, "status">): boolean {
+  return shift.status === "worked" || shift.status === "sick";
+}
+
 /** Month key "yyyy-MM" from an ISO date. */
 export function monthOf(isoDate: string): string {
   return isoDate.slice(0, 7);
@@ -75,7 +87,11 @@ export function computeShiftEarnings(
   const netFactorUsed = factor ?? 1; // no payslips at all => show gross as net
   const net = gross * netFactorUsed;
 
-  const tips = usableTips(shift.tips ?? 0, settings.tipPoolRate);
+  // A sick day pays the wage but structurally never tips — you weren't there to
+  // earn them. Forced to 0 here (not just trusted to be undefined) so re-marking
+  // an already-logged shift as sick can't leave its old tips counting as income.
+  const sick = shift.status === "sick";
+  const tips = sick ? 0 : usableTips(shift.tips ?? 0, settings.tipPoolRate);
   const takeHome = net + tips;
   const workingDays = shift.crossesMidnight ? 2 : 1;
 
@@ -84,7 +100,7 @@ export function computeShiftEarnings(
     netPay: net,
     usableTips: tips,
     takeHome,
-    tipsPerHour: hours > 0 ? (shift.tips ?? 0) / hours : null,
+    tipsPerHour: sick || hours <= 0 ? null : (shift.tips ?? 0) / hours,
     netPerHour: hours > 0 ? net / hours : null,
     workingDays,
     netFactorUsed,

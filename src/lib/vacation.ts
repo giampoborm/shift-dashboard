@@ -73,8 +73,9 @@ export interface VacationCalc {
   daysPerWeek: number; // avg working-days/week from history
 }
 
-/** One-shot calculation for a date range. */
-export function calcVacation(fromIso: string, toIso: string, worked: Shift[]): VacationCalc {
+/** One-shot calculation for a date range. `history` is the full shift list —
+ *  the roster-profile helpers pick out the rostered days (worked + sick). */
+export function calcVacation(fromIso: string, toIso: string, history: Shift[]): VacationCalc {
   const holidays = berlinHolidays(fromIso, toIso);
   const holidaySet = new Set(holidays.map((h) => h.date));
   const calendarDays =
@@ -84,7 +85,7 @@ export function calcVacation(fromIso: string, toIso: string, worked: Shift[]): V
     werktage: countWerktage(fromIso, toIso, holidaySet, true),
     arbeitstage: countWerktage(fromIso, toIso, holidaySet, false),
     holidays,
-    scheduleCost: estimateScheduledCost(fromIso, toIso, buildWeekdayProfile(worked)),
-    daysPerWeek: avgWorkingDaysPerWeek(worked),
+    scheduleCost: estimateScheduledCost(fromIso, toIso, buildWeekdayProfile(history)),
+    daysPerWeek: avgWorkingDaysPerWeek(history),
   };
 }

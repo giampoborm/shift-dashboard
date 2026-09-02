@@ -236,3 +236,37 @@ describe("estimateVacationPayDays", () => {
     expect(days.map((d) => d.date)).toEqual(["2026-06-29", "2026-06-30"]); // Mon + Tue, not Wed
   });
 });
+
+describe("sick days in the roster math", () => {
+  // Being ill doesn't make you a less-scheduled employee: the day still counts
+  // as one you were rostered for, so it must not shrink the vacation budget.
+  const fridays = [shift("2026-06-05"), shift("2026-06-12"), shift("2026-06-19")];
+
+  it("keeps a weekday's roster probability when one of those days was sick", () => {
+    const withSick = [shift("2026-06-05"), shift("2026-06-12", false, "sick"), shift("2026-06-19")];
+    expect(buildWeekdayProfile(withSick)[5].p).toBeCloseTo(1); // still a Friday job
+    expect(buildWeekdayProfile(withSick)[5].n).toBe(3);
+  });
+
+  it("keeps avg working-days/week unchanged when a day was sick", () => {
+    const withSick = [shift("2026-06-05"), shift("2026-06-12", false, "sick"), shift("2026-06-19")];
+    expect(avgWorkingDaysPerWeek(withSick)).toBeCloseTo(avgWorkingDaysPerWeek(fridays));
+  });
+
+  it("still ignores planned and swapped-out days", () => {
+    const noisy = [...fridays, shift("2026-06-08", false, "planned"), shift("2026-06-15", false, "swapped-out")];
+    expect(buildWeekdayProfile(noisy)[1].p).toBe(0); // Mondays never rostered-and-paid
+  });
+
+  it("prices vacation days off WORKED days only — a sick day's hours were never stood", () => {
+    const rates: GrossRate[] = [{ effectiveFrom: "2026-01-01", rate: 15 }];
+    // A short sick day (2h) among 6h worked days must not drag the daily average down.
+    const withShortSick = [
+      ...fridays,
+      { ...shift("2026-06-26", false, "sick"), actualHours: 2 },
+    ];
+    expect(avgGrossPerWorkedDay(withShortSick, rates, "2026-06-30")).toBeCloseTo(
+      avgGrossPerWorkedDay(fridays, rates, "2026-06-30"),
+    );
+  });
+});

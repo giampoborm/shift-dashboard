@@ -320,6 +320,7 @@ button:disabled:hover { background: var(--panel-2); }
       brutto/netto card sit side by side underneath it, both normal (unrotated)
       orientation. Desktop (see media query below): one flat horizontal row,
       total → tips → brutto/netto, also centred. */
+.sick-note { font-size: 0.78rem; margin: 0.2rem 0 0; }
 .money-grid {
   display: flex;
   flex-direction: column;
@@ -467,6 +468,7 @@ tbody tr:hover { background: var(--panel-2); }
 .tag.meeting { color: #64748b; }
 .tag.planned { color: #b45309; }
 .tag.worked { color: #15803d; }
+.tag.sick { color: #b45309; }
 .pos { color: var(--text); font-weight: 700; }
 .muted { color: var(--muted); }
 
@@ -531,6 +533,7 @@ tr.dim td { text-decoration: line-through; }
 .modal .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
 .modal .checkbox-row { flex-direction: row; align-items: center; gap: 0.4rem; }
 .modal .checkbox-row input[type="checkbox"] { width: auto; }
+.modal .hint { font-size: 0.78rem; line-height: 1.35; margin: 0 0 0.5rem; }
 .modal .err { color: var(--bad); font-size: 0.8rem; margin: 0 0 0.5rem; }
 .modal-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.5rem; }
 button.danger { color: var(--bad); border-color: var(--bad); }
@@ -597,6 +600,8 @@ button.danger:hover { background: var(--bad); color: #fff; }
 /* worked = filled chip (type colour bg, white text); planned = outline */
 .cal-chip.st-worked { background: var(--chip); color: #fff; border-color: transparent; font-weight: 700; }
 .cal-chip.st-swapped-out, .cal-chip.st-swapped-in { opacity: 0.5; text-decoration: line-through; }
+/* sick = rostered but not stood: paid, so it still reads as "settled" (dashed, amber) */
+.cal-chip.st-sick { border-style: dashed; border-color: #b45309; color: #b45309; font-style: italic; }
 
 .cal-cell.vacation { background: #ecfdf5; }
 .cal-cell.vacation:hover { background: #d8f5e8; }

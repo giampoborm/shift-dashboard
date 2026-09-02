@@ -74,3 +74,15 @@ describe("reconcileMonth", () => {
     expect(r.derivedGross).toBeCloseTo(300);
   });
 });
+
+describe("reconcileMonth with sick days", () => {
+  it("counts a sick day's continued wage — payroll pays it, so the slip includes it", () => {
+    const sick: Shift = { ...worked("2026-06-19", 10), status: "sick" };
+    const shifts = [worked("2026-06-05", 10), sick];
+    const r = reconcileMonth("2026-06", shifts, rates, [juneSlip])!;
+    expect(r.loggedShifts).toBe(2);
+    expect(r.loggedHours).toBeCloseTo(20);
+    expect(r.derivedGross).toBeCloseTo(300);
+    expect(r.discrepant).toBe(false); // would flag a false €150 gap if sick were dropped
+  });
+});

@@ -4,7 +4,7 @@ import { addMonths, endOfMonth, format, startOfMonth, subMonths } from "date-fns
 import { db, ensureSeeded, getSettings } from "./lib/db";
 import { importHistoryCsv, type ImportWarning } from "./lib/importHistory";
 import { importPlanCsv, plannedHours } from "./lib/importPlan";
-import { computeShiftEarnings, sumEarnings } from "./lib/earnings";
+import { computeShiftEarnings, isPaidShift, sumEarnings } from "./lib/earnings";
 import { weekdayOf } from "./lib/shiftTime";
 import { formatDate, formatDateShort } from "./lib/format";
 import { shiftsToCsv, downloadText } from "./lib/exportCsv";
@@ -263,7 +263,6 @@ export function App() {
       ) : room === "tools" ? (
         <Tools
           allShifts={allShifts!}
-          worked={workedHistory}
           rates={rates!}
           payslips={payslips!}
           settings={settings!}
@@ -354,9 +353,12 @@ function Home(props: {
 
   const month = useMemo(() => {
     const inMonth = shiftsInMonth(allShifts, cursor);
-    const workedM = inMonth.filter((s) => s.status === "worked");
+    // Banked = every PAID shift, so a sick day's continued wage lands in the month
+    // total (it carries no tips — computeShiftEarnings zeroes those).
+    const paidM = inMonth.filter(isPaidShift);
+    const sickM = paidM.filter((s) => s.status === "sick");
     const plannedM = inMonth.filter((s) => s.status === "planned" || s.status === "swapped-in");
-    const banked = sumEarnings(workedM, rates, payslips, settings);
+    const banked = sumEarnings(paidM, rates, payslips, settings);
     const projected = sumEstimates(plannedM, worked, rates, payslips, settings);
     // When the user resolved a payslip discrepancy in favour of the slip, the
     // banked wage part (brutto/netto, and netto's share of take-home) comes from
@@ -382,7 +384,7 @@ function Home(props: {
         const clipFrom = v.from > monthStartIso ? v.from : monthStartIso;
         const clipTo = v.to < monthEndIso ? v.to : monthEndIso;
         const inRange = allShifts.filter((s) => s.date >= clipFrom && s.date <= clipTo);
-        const est = estimateVacationPay(clipFrom, clipTo, worked, inRange, rates, payslips);
+        const est = estimateVacationPay(clipFrom, clipTo, allShifts, inRange, rates, payslips);
         vacGross += est.gross;
         vacNet += est.net;
       }
@@ -392,7 +394,9 @@ function Home(props: {
     // projected (planned estimates + any estimated paid-vacation days) — the
     // actual-vs-estimate blend, made visible.
     return {
-      workedCount: workedM.length,
+      workedCount: paidM.length - sickM.length,
+      sickCount: sickM.length,
+      sickNet: sumEarnings(sickM, rates, payslips, settings).netPay,
       plannedCount: plannedM.length,
       takeHome: { banked: bankedNet + banked.usableTips, projected: projected.takeHome.median + vacNet },
       gross: { banked: bankedGross, projected: projected.grossWage + vacGross },
@@ -478,6 +482,13 @@ function Home(props: {
           </div>
         </div>
       </div>
+
+      {month.sickCount > 0 && (
+        <p className="muted sick-note">
+          Includes {month.sickCount} sick day{month.sickCount > 1 ? "s" : ""} ·{" "}
+          {eur(month.sickNet)} net wage, no tips
+        </p>
+      )}
 
       {showRecon && recon && (
         <ReconcilePopup recon={recon} onClose={() => setShowRecon(false)} />
@@ -610,7 +621,6 @@ function Analysis(props: {
 // ─────────────────────────────────────────────────────────────────────────────
 function Tools(props: {
   allShifts: Shift[];
-  worked: Shift[];
   rates: GrossRate[];
   payslips: Payslip[];
   settings: Settings;
@@ -621,7 +631,7 @@ function Tools(props: {
   onImportPlan: () => void;
   onClear: () => void;
 }) {
-  const { allShifts, worked, rates, payslips, settings, lastImport, warnings, hasShifts, onImportHistory, onImportPlan, onClear } = props;
+  const { allShifts, rates, payslips, settings, lastImport, warnings, hasShifts, onImportHistory, onImportPlan, onClear } = props;
   const warns = warnings.filter((w) => w.severity === "warn");
   const infos = warnings.filter((w) => w.severity === "info");
 
@@ -661,7 +671,7 @@ function Tools(props: {
       )}
 
       <Suspense fallback={<div className="empty">Loading…</div>}>
-        <VacationPlanner worked={worked} allShifts={allShifts} rates={rates} payslips={payslips} settings={settings} />
+        <VacationPlanner allShifts={allShifts} rates={rates} payslips={payslips} settings={settings} />
       </Suspense>
 
       <div className="card">

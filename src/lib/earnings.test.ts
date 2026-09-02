@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   computeShiftEarnings,
+  isPaidShift,
   netFactorForMonth,
   rateForDate,
   usableTips,
@@ -136,5 +137,56 @@ describe("sumEarnings", () => {
     expect(t.grossPay).toBeCloseTo(7 * 14.5 + 6.2 * 14.5);
     expect(t.reportedTips).toBe(94);
     expect(t.usableTips).toBeCloseTo(94 * 0.95);
+  });
+});
+
+describe("sick days", () => {
+  it("pays the wage for the hours you would have stood", () => {
+    const e = computeShiftEarnings(
+      shift({ date: "2026-04-10", status: "sick", actualHours: 6, grossRate: 15.5 }),
+      rates,
+      payslips,
+      settings,
+    );
+    expect(e.grossPay).toBeCloseTo(93); // 6 × 15.50, same as if worked
+    expect(e.netPay).toBeCloseTo(93 * (1074.84 / 1371.75));
+    expect(e.netFactorEstimated).toBe(false);
+  });
+
+  it("never pays tips, even if a tips value was left on the record", () => {
+    const e = computeShiftEarnings(
+      shift({ date: "2026-04-10", status: "sick", actualHours: 6, grossRate: 15.5, tips: 80 }),
+      rates,
+      payslips,
+      settings,
+    );
+    expect(e.usableTips).toBe(0);
+    expect(e.takeHome).toBeCloseTo(e.netPay);
+    expect(e.tipsPerHour).toBeNull(); // not €0/h — no tip datapoint at all
+  });
+
+  it("sums into totals alongside worked shifts, wage only", () => {
+    const t = sumEarnings(
+      [
+        shift({ date: "2026-04-03", status: "worked", actualHours: 6, grossRate: 15.5, tips: 60 }),
+        shift({ date: "2026-04-10", status: "sick", actualHours: 6, grossRate: 15.5 }),
+      ],
+      rates,
+      payslips,
+      settings,
+    );
+    expect(t.shifts).toBe(2);
+    expect(t.hours).toBeCloseTo(12);
+    expect(t.grossPay).toBeCloseTo(186);
+    expect(t.reportedTips).toBeCloseTo(60); // only the worked night tipped
+    expect(t.usableTips).toBeCloseTo(57);
+  });
+
+  it("isPaidShift covers worked + sick and nothing else", () => {
+    expect(isPaidShift({ status: "worked" })).toBe(true);
+    expect(isPaidShift({ status: "sick" })).toBe(true);
+    expect(isPaidShift({ status: "planned" })).toBe(false);
+    expect(isPaidShift({ status: "swapped-out" })).toBe(false);
+    expect(isPaidShift({ status: "swapped-in" })).toBe(false);
   });
 });

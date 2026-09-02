@@ -4,10 +4,11 @@
 import { useState } from "react";
 import { db } from "../lib/db";
 import { classifyShiftType, parseTimeSlot, parseTimeToken } from "../lib/shiftTime";
+import { plannedHours } from "../lib/importPlan";
 import { rateForDate } from "../lib/earnings";
 import type { GrossRate, Settings, Shift, ShiftStatus } from "../lib/types";
 
-const STATUSES: ShiftStatus[] = ["planned", "worked", "swapped-out", "swapped-in"];
+const STATUSES: ShiftStatus[] = ["planned", "worked", "sick", "swapped-out", "swapped-in"];
 
 export interface EditorPrefill {
   date?: string;
@@ -42,9 +43,14 @@ export function ShiftEditor(props: {
   const [tips, setTips] = useState(shift?.tips != null ? String(shift.tips) : "");
   const [notes, setNotes] = useState(shift?.notes ?? "");
   const [isMeeting, setIsMeeting] = useState(shift?.shiftType === "meeting");
+  const isSick = status === "sick";
   const [error, setError] = useState("");
 
-  function buildRecord(): Omit<Shift, "id"> | null {
+  // `effectiveStatus` is the status the record is being SAVED with — the quick
+  // "Mark worked"/"Mark sick" buttons pass it in, so their rules (a sick day has
+  // no tips and falls back to the rostered slot's hours) apply to the built record
+  // rather than to whatever the dropdown happened to show.
+  function buildRecord(effectiveStatus: ShiftStatus = status): Omit<Shift, "id"> | null {
     if (!date) {
       setError("Date is required.");
       return null;
@@ -70,7 +76,7 @@ export function ShiftEditor(props: {
         plannedEnd: parsed?.openEnd ? undefined : parsed?.end ?? shift?.plannedEnd,
         openEnd: parsed?.openEnd ?? shift?.openEnd ?? false,
         crossesMidnight: parsed?.crossesMidnight ?? shift?.crossesMidnight ?? false,
-        status,
+        status: effectiveStatus,
         actualHours: h ?? 2,
         tips: undefined,
         grossRate: rateForDate(date, rates) ?? shift?.grossRate,
@@ -87,17 +93,31 @@ export function ShiftEditor(props: {
       setError("Tips must be a number.");
       return null;
     }
+
+    const start = parsed?.start ?? shift?.plannedStart;
+    const end = parsed?.openEnd ? undefined : parsed?.end ?? shift?.plannedEnd;
+    const isOpenEnd = parsed?.openEnd ?? shift?.openEnd ?? false;
+
+    // A sick day is a shift you were rostered for, missed, and are still paid for
+    // (Entgeltfortzahlung). It keeps its real type and slot; the paid hours default
+    // to the length of the slot you would have stood, and tips are dropped — you
+    // weren't there to earn any, and a leftover value would inflate the tip stats.
+    const isSickRecord = effectiveStatus === "sick";
+    const paidHours = isSickRecord
+      ? h ?? plannedHours(start, end, isOpenEnd, settings.closingTime) ?? undefined
+      : h;
+
     return {
       date,
       station: station.trim() || "BAR",
       shiftType,
-      plannedStart: parsed?.start ?? shift?.plannedStart,
-      plannedEnd: parsed?.openEnd ? undefined : parsed?.end ?? shift?.plannedEnd,
-      openEnd: parsed?.openEnd ?? shift?.openEnd ?? false,
+      plannedStart: start,
+      plannedEnd: end,
+      openEnd: isOpenEnd,
       crossesMidnight: parsed?.crossesMidnight ?? shift?.crossesMidnight ?? false,
-      status,
-      actualHours: h,
-      tips: t,
+      status: effectiveStatus,
+      actualHours: paidHours,
+      tips: isSickRecord ? undefined : t,
       grossRate: rateForDate(date, rates) ?? shift?.grossRate,
       notes: notes.trim() || undefined,
       source: shift?.source ?? "manual",
@@ -106,9 +126,8 @@ export function ShiftEditor(props: {
   }
 
   async function save(overrideStatus?: ShiftStatus) {
-    const rec = buildRecord();
+    const rec = buildRecord(overrideStatus ?? status);
     if (!rec) return;
-    if (overrideStatus) rec.status = overrideStatus;
     if (editing && shift!.id != null) await db.shifts.update(shift!.id, rec);
     else await db.shifts.add(rec as Shift);
     onClose();
@@ -161,20 +180,41 @@ export function ShiftEditor(props: {
           <input value={slot} onChange={(e) => setSlot(e.target.value)} placeholder="18:00-Ende" />
         </label>
         <label>Status
-          <select value={status} onChange={(e) => setStatus(e.target.value as ShiftStatus)}>
+          <select
+            value={status}
+            onChange={(e) => {
+              const next = e.target.value as ShiftStatus;
+              setStatus(next);
+              // Mirror the meeting checkbox: landing on "sick" empties the tips
+              // field so the form shows what will be saved (buildRecord drops tips
+              // for a sick record regardless — this is UX polish, not the guard).
+              if (next === "sick") setTips("");
+            }}
+          >
             {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
         </label>
         <div className="row2">
-          <label>Hours worked
-            <input value={hours} onChange={(e) => setHours(e.target.value)} placeholder="6.5" inputMode="decimal" />
+          <label>{isSick ? "Hours paid" : "Hours worked"}
+            <input
+              value={hours}
+              onChange={(e) => setHours(e.target.value)}
+              placeholder={isSick ? "blank = the slot's length" : "6.5"}
+              inputMode="decimal"
+            />
           </label>
-          {!isMeeting && (
+          {!isMeeting && !isSick && (
             <label>Tips (€)
               <input value={tips} onChange={(e) => setTips(e.target.value)} placeholder="60" inputMode="decimal" />
             </label>
           )}
         </div>
+        {isSick && (
+          <p className="muted hint">
+            Sick day — the wage keeps running (Entgeltfortzahlung), tips don't. It still
+            counts as a day you were rostered, but stays out of every tip statistic.
+          </p>
+        )}
         <label>Notes
           <input value={notes} onChange={(e) => setNotes(e.target.value)} />
         </label>
@@ -185,6 +225,11 @@ export function ShiftEditor(props: {
           {editing && status !== "worked" && (
             <button onClick={() => save("worked")} title="Mark worked with the hours/tips above">
               Mark worked
+            </button>
+          )}
+          {editing && !isSick && (
+            <button onClick={() => save("sick")} title="Missed sick — paid the shift's wage, no tips">
+              Mark sick
             </button>
           )}
           {editing && <button onClick={swap} title="Give this shift away and add the one you picked up">Swap…</button>}

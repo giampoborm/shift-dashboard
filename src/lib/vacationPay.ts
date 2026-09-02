@@ -7,7 +7,19 @@
 
 import { eachDayOfInterval, format, getDay, parseISO } from "date-fns";
 import type { GrossRate, Payslip, Shift } from "./types";
-import { netFactorForMonth, rateForDate } from "./earnings";
+import { isPaidShift, netFactorForMonth, rateForDate } from "./earnings";
+
+/**
+ * Days you were ON THE ROSTER: worked, or rostered-and-missed-sick. Being ill
+ * doesn't make you a less-scheduled employee, so sick days belong in the roster
+ * frequency the vacation budget and cost are derived from — otherwise a bad flu
+ * would quietly shrink your entitlement. Meetings never do (not floor roster).
+ *
+ * The `history` these read is the FULL shift list; they filter it themselves.
+ */
+function wasRostered(s: Shift): boolean {
+  return isPaidShift(s) && !!s.date && s.shiftType !== "meeting";
+}
 
 export interface WeekdayProfile {
   p: number; // probability the user is scheduled that weekday (0..1)
@@ -22,10 +34,10 @@ function countWeekdayOccurrences(minIso: string, maxIso: string, wd: number): nu
   return c;
 }
 
-/** Per-weekday roster profile derived from worked history. */
-export function buildWeekdayProfile(worked: Shift[]): WeekdayProfile[] {
+/** Per-weekday roster profile derived from rostered history (worked + sick). */
+export function buildWeekdayProfile(history: Shift[]): WeekdayProfile[] {
   const blank: WeekdayProfile[] = Array.from({ length: 7 }, () => ({ p: 0, n: 0 }));
-  const ws = worked.filter((s) => s.status === "worked" && s.date && s.shiftType !== "meeting");
+  const ws = history.filter(wasRostered);
   if (ws.length === 0) return blank;
 
   const dates = ws.map((s) => s.date).sort();
@@ -41,12 +53,9 @@ export function buildWeekdayProfile(worked: Shift[]): WeekdayProfile[] {
   return blank;
 }
 
-/** Average distinct working-days per week across the worked history. */
-export function avgWorkingDaysPerWeek(worked: Shift[]): number {
-  const dates = worked
-    .filter((s) => s.status === "worked" && s.date && s.shiftType !== "meeting")
-    .map((s) => s.date)
-    .sort();
+/** Average distinct working-days per week across the rostered history (worked + sick). */
+export function avgWorkingDaysPerWeek(history: Shift[]): number {
+  const dates = history.filter(wasRostered).map((s) => s.date).sort();
   if (dates.length === 0) return 0;
   const spanDays =
     Math.abs(parseISO(dates[dates.length - 1]).getTime() - parseISO(dates[0]).getTime()) /
@@ -92,9 +101,12 @@ export function estimateScheduledCost(
  * weeks / 91 days, the usual Urlaubsentgelt reference period) ending `asOfIso`.
  * Falls back to all worked history if the window is empty. Used as the flat
  * per-day rate for estimated paid vacation days — there's no real shift to price.
+ *
+ * Strictly WORKED days here (unlike the roster profile above): this prices what a
+ * real day on the floor grosses, and a sick day's hours were estimated, not stood.
  */
 export function avgGrossPerWorkedDay(
-  worked: Shift[],
+  history: Shift[],
   rates: GrossRate[],
   asOfIso: string,
   windowDays = 91,
@@ -103,8 +115,8 @@ export function avgGrossPerWorkedDay(
   cutoff.setDate(cutoff.getDate() - windowDays);
   const cutoffIso = cutoff.toISOString().slice(0, 10);
   const isCandidate = (s: Shift) => s.status === "worked" && s.shiftType !== "meeting";
-  let sample = worked.filter((s) => isCandidate(s) && s.date >= cutoffIso && s.date <= asOfIso);
-  if (sample.length === 0) sample = worked.filter(isCandidate);
+  let sample = history.filter((s) => isCandidate(s) && s.date >= cutoffIso && s.date <= asOfIso);
+  if (sample.length === 0) sample = history.filter(isCandidate);
   if (sample.length === 0) return 0;
   const total = sample.reduce((sum, s) => {
     const rate = s.grossRate ?? rateForDate(s.date, rates) ?? 0;
@@ -133,11 +145,11 @@ export interface VacationPayDay {
 export function estimateVacationPayDays(
   fromIso: string,
   toIso: string,
-  worked: Shift[],
+  history: Shift[],
   scheduledInRange: Shift[],
 ): VacationPayDay[] {
   if (toIso < fromIso) return [];
-  const profile = buildWeekdayProfile(worked);
+  const profile = buildWeekdayProfile(history);
   const rostered = new Set(
     scheduledInRange
       .filter((s) => s.status !== "swapped-out" && s.shiftType !== "meeting")
@@ -180,16 +192,16 @@ const ZERO_PAY_ESTIMATE: VacationPayEstimate = { days: 0, avgDayGross: 0, gross:
 export function estimateVacationPay(
   fromIso: string,
   toIso: string,
-  worked: Shift[],
+  history: Shift[],
   scheduledInRange: Shift[],
   rates: GrossRate[],
   payslips: Payslip[],
 ): VacationPayEstimate {
   if (toIso < fromIso) return ZERO_PAY_ESTIMATE;
-  const days = estimateVacationPayDays(fromIso, toIso, worked, scheduledInRange);
+  const days = estimateVacationPayDays(fromIso, toIso, history, scheduledInRange);
   if (days.length === 0) return ZERO_PAY_ESTIMATE;
 
-  const avgDayGross = avgGrossPerWorkedDay(worked, rates, toIso);
+  const avgDayGross = avgGrossPerWorkedDay(history, rates, toIso);
   const gross = days.length * avgDayGross;
   const { factor } = netFactorForMonth(toIso.slice(0, 7), payslips);
   const net = gross * (factor ?? 1);

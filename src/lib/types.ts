@@ -3,7 +3,13 @@
 // times are "HH:mm" strings. Weekday is always DERIVED from the date, never trusted
 // from source data (the history CSV's weekday column is unreliable).
 
-export type ShiftStatus = "planned" | "worked" | "swapped-out" | "swapped-in";
+/**
+ * Lifecycle of a shift. "sick" is a rostered shift you did NOT work but are still
+ * paid for (Entgeltfortzahlung, §3 EntgFG): the wage continues, the tips do not —
+ * you weren't there to earn them. It keeps its real shiftType/slot, so it stays
+ * out of every tip statistic while still counting as a day you were on the roster.
+ */
+export type ShiftStatus = "planned" | "worked" | "sick" | "swapped-out" | "swapped-in";
 
 /**
  * Named shift types. Five are classified from start time + open-end + past-midnight

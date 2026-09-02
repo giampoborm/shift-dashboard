@@ -21,27 +21,27 @@ const rng = (a: number, b: number) =>
   Math.round(a) === Math.round(b) ? `${Math.round(a)}` : `${Math.round(a)}–${Math.round(b)}`;
 
 export function VacationPlanner(props: {
-  worked: Shift[];
+  /** Full shift list — the vacation math picks out rostered days (worked + sick) itself. */
   allShifts: Shift[];
   rates: GrossRate[];
   payslips: Payslip[];
   settings: Settings;
 }) {
-  const { worked, allShifts, rates, payslips, settings } = props;
+  const { allShifts, rates, payslips, settings } = props;
   const today = new Date().toISOString().slice(0, 10);
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(addDaysIso(today, 13));
   const [note, setNote] = useState("");
 
-  const calc = useMemo(() => calcVacation(from, to, worked), [from, to, worked]);
+  const calc = useMemo(() => calcVacation(from, to, allShifts), [from, to, allShifts]);
 
   // Shifts still on the roster within the draft range — an already-imported plan
   // (e.g. a partial week) offsets how many days count as paid vacation.
   const payEst = useMemo(() => {
     if (to < from) return null;
     const inRange = allShifts.filter((s) => s.date >= from && s.date <= to);
-    return estimateVacationPay(from, to, worked, inRange, rates, payslips);
-  }, [from, to, worked, allShifts, rates, payslips]);
+    return estimateVacationPay(from, to, allShifts, inRange, rates, payslips);
+  }, [from, to, allShifts, rates, payslips]);
 
   const vacations = useLiveQuery(() => db.vacations.orderBy("from").toArray(), []) ?? [];
   const year = new Date().getFullYear();
