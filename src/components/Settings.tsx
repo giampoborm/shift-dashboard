@@ -19,6 +19,7 @@ import {
   validateSettings,
 } from "../lib/settingsStore";
 import type { GrossRate, Payslip, Settings as SettingsT, Vacation } from "../lib/types";
+import { describeChargeableWeekdays } from "../lib/vacationPayroll";
 import { describeFit, fitChargeRules, impliedPerWeek } from "../lib/vacationRuleFit";
 import { SyncPanel } from "./SyncPanel";
 
@@ -125,10 +126,8 @@ function GeneralSection(props: {
 
       <h4 style={{ margin: "1rem 0 0.2rem" }}>Payroll vacation rule</h4>
       <p className="hint">
-        How your employer actually counts and pays a day off. Rather than being assumed, this is
-        <strong> fitted to your payslips</strong>: each slip’s “Genommene Urlaubstage” is checked
-        against the vacation you recorded, and only the counting rules that reproduce every slip
-        survive. Add those figures to a payslip below and the rule pins itself down.
+        How your employer counts and pays a day off. Enter a payslip’s vacation figures below and
+        the app checks these settings against it.
       </p>
       <RuleFitNote
         settings={s}
@@ -199,33 +198,34 @@ function RuleFitNote(props: {
   const hoursDiffer =
     fit.dayHours != null && Math.abs(fit.dayHours - props.settings.vacationDayHours) > 0.01;
 
+  const currentLabel = describeChargeableWeekdays(props.settings.vacationChargeableWeekdays);
+
   return (
     <div className={`hint rule-fit${fit.conflict ? " err" : ""}`}>
-      <strong>{fit.conflict ? "⚠ " : fit.resolved ? "✓ " : "? "}</strong>
-      {describeFit(fit)}
-      {perWeek != null && !fit.conflict && (
-        <>
-          {" "}
-          Your {props.settings.vacationPayrollDays}-day entitlement over{" "}
-          {props.settings.vacationWerktage / 6} weeks implies {perWeek} charged days a week, which
-          narrows the candidates.
-        </>
-      )}
+      <span className="rule-fit-head">
+        {fit.conflict ? "⚠" : fit.resolved ? "✓" : "?"} Charging{" "}
+        <strong>{currentLabel}</strong>, {r1(props.settings.vacationDayHours)} h a day
+      </span>
+      <span className="rule-fit-body">{describeFit(fit)}</span>
       {fit.dayHoursConflict && (
-        <> Your payslips disagree about hours per vacation day — check the figures entered.</>
+        <span className="rule-fit-body">
+          Your payslips disagree about how many hours a vacation day is paid — check the figures
+          entered.
+        </span>
       )}
       {(differs || hoursDiffer) && (
-        <div className="row-actions" style={{ marginTop: "0.4rem" }}>
+        <div className="row-actions">
           <button onClick={() => props.onApply(fit.rules[0]?.weekdays ?? [], fit.dayHours)}>
-            Apply fitted rule
-            {differs ? ` (${fit.rules[0].label})` : ""}
-            {hoursDiffer ? ` @ ${fit.dayHours} h/day` : ""}
+            Change to {differs ? fit.rules[0].label : currentLabel}
+            {hoursDiffer ? `, ${r1(fit.dayHours ?? 0)} h a day` : ""}
           </button>
         </div>
       )}
     </div>
   );
 }
+
+const r1 = (n: number) => Math.round(n * 10) / 10;
 
 function RatesSection(props: { rates: GrossRate[] }) {
   const sorted = sortRates(props.rates);
@@ -329,6 +329,13 @@ function PayslipsSection(props: { payslips: Payslip[] }) {
       <p className="hint">
         Each payslip derives that month’s <strong>net factor</strong> = net ÷ gross. Gross is wage only (tips excluded — tips are tax-free).
         Months without a payslip fall back to the blended factor{blended != null ? ` (${(blended * 100).toFixed(1)}%)` : ""}.
+      </p>
+      <p className="hint">
+        The last two boxes are the slip’s <em>vacation</em> lines — leave them blank on a month you
+        took none. <strong>Urlaubstage</strong> is what payroll deducted; <strong>Urlaub h</strong> is
+        what it paid for them. The hours look redundant but aren’t: dividing them by the days is how
+        the app works out the flat hours a vacation day is paid, instead of assuming them — and they’re
+        the figure the month’s vacation pay is taken from once the slip exists.
       </p>
       <div className="editrows">
         {sorted.map((p) => (

@@ -186,15 +186,14 @@ export function VacationPlanner(props: {
           <p className="muted" style={{ fontSize: "0.8rem" }}>
             Payroll charges <strong>{describeChargeableWeekdays(chargeable)}</strong> off your{" "}
             {settings.vacationPayrollDays} and pays each one a flat{" "}
-            <strong>{r1(settings.vacationDayHours)} h</strong> — not your real shift length. That
-            rule is <strong>fitted to your payslips</strong>, not assumed: {describeFit(fit)}
+            <strong>{r1(settings.vacationDayHours)} h</strong> — not your real shift length.{" "}
+            {describeFit(fit)}
             {!predicted.agree && (
               <>
                 {" "}
-                For this particular range they disagree ({predicted.min}–{predicted.max} days),
-                because it starts or ends mid-week — the surviving rules always agree on whole
-                weeks and part company only at the edges. Enter another slip's “Genommene
-                Urlaubstage” in Settings to settle it.
+                That is why this range shows a spread: depending on which is right it costs{" "}
+                {predicted.min} or {predicted.max} days. Add another payslip’s vacation figures in
+                Settings to settle it.
               </>
             )}{" "}
             A midnight-crossing shift counts as one vacation day.

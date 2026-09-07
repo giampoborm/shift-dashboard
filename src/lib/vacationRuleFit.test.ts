@@ -275,24 +275,52 @@ describe("predictChargedDaysInMonth", () => {
   });
 });
 
+// The copy is user-facing, so these assert readability as much as correctness:
+// no "candidates", no "hypotheses", no counts of internal state.
 describe("describeFit", () => {
-  it("says the rule is an assumption with no evidence", () => {
-    expect(describeFit(fitChargeRules([], []))).toMatch(/assumption/);
+  const JARGON = /candidate|hypothes|prune|space|constraint|perWeek/i;
+
+  it("says plainly that nothing has been checked yet", () => {
+    expect(describeFit(fitChargeRules([], []))).toBe("Not checked against a payslip yet.");
   });
 
-  it("names the rule and its support once resolved", () => {
+  it("credits the payslip once resolved, without restating the rule", () => {
+    // The weekday set is shown next to this line, so repeating it here is noise.
     const fit = fitChargeRules([augSlip()], [AUG], { perWeek: 5 });
-    expect(describeFit(fit)).toBe("Tue–Sat, confirmed by 1 payslip.");
+    expect(describeFit(fit)).toBe("Confirmed by 1 payslip.");
   });
 
-  it("lists the survivors while still ambiguous", () => {
+  it("names both survivors and says when they differ, in plain English", () => {
     const text = describeFit(fitChargeRules([augSlip()], [AUG]));
-    expect(text).toContain("2 rules still fit");
-    expect(text).toContain("Tue–Sat");
+    expect(text).toBe(
+      "Mon–Thu and Tue–Sat both fit your 1 payslip equally well — they only differ when a vacation starts or ends mid-week.",
+    );
   });
 
-  it("calls out a conflict as a possible payroll change", () => {
+  it("explains a conflict as something to check, not as an error code", () => {
     const fit = fitChargeRules([augSlip({ vacationDays: 3 })], [AUG], { perWeek: 5 });
-    expect(describeFit(fit)).toMatch(/No counting rule reproduces/);
+    expect(describeFit(fit)).toMatch(/check the vacation dates and the days you entered/);
+  });
+
+  it("blames payroll changing its counting once several slips disagree", () => {
+    const july: Payslip = {
+      month: "2026-07",
+      totalGross: 0,
+      totalHours: 0,
+      totalNet: 0,
+      vacationDays: 99,
+    };
+    const fit = fitChargeRules([augSlip(), july], [AUG], { perWeek: 5 });
+    expect(describeFit(fit)).toMatch(/all 2 payslips/);
+  });
+
+  it("never leaks internal vocabulary into the UI", () => {
+    const fits = [
+      fitChargeRules([], []),
+      fitChargeRules([augSlip()], [AUG]),
+      fitChargeRules([augSlip()], [AUG], { perWeek: 5 }),
+      fitChargeRules([augSlip({ vacationDays: 3 })], [AUG], { perWeek: 5 }),
+    ];
+    for (const f of fits) expect(describeFit(f)).not.toMatch(JARGON);
   });
 });

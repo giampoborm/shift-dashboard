@@ -796,3 +796,6 @@ button.linklike:hover { background: none; color: var(--text); }
   border-left: 3px solid var(--warn);
   padding-left: 0.55rem;
 }
+.settings .rule-fit { display: flex; flex-direction: column; gap: 0.25rem; }
+.settings .rule-fit-head { color: var(--text); }
+.settings .rule-fit-body { color: var(--muted); }

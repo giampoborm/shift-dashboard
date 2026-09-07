@@ -226,21 +226,29 @@ export function predictChargedDaysInMonth(
   return spread(rules.map((r) => chargedDatesInMonth(month, vacations, r.weekdays).length));
 }
 
-/** One-line summary of where the fit stands, for the Settings panel. */
+/** "A, B and C" — plain English, so the UI never has to print a bare list. */
+function joinLabels(rules: ChargeRule[]): string {
+  const l = rules.map((r) => r.label);
+  if (l.length <= 1) return l[0] ?? "";
+  return `${l.slice(0, -1).join(", ")} and ${l[l.length - 1]}`;
+}
+
+/**
+ * Where the fit stands, in words a person would use. Deliberately says nothing
+ * about hypothesis spaces, pruning or candidate counts — how the app narrowed the
+ * options is its own business; what the user needs is which weekdays get charged
+ * and whether that has been checked against a real payslip.
+ */
 export function describeFit(fit: RuleFit): string {
+  const n = fit.observations;
+  const slips = `${n} payslip${n === 1 ? "" : "s"}`;
   if (fit.conflict) {
-    return fit.observations === 1
-      ? "No counting rule reproduces your payslip — check the vacation dates or the figures entered."
-      : `No single rule reproduces all ${fit.observations} payslips — payroll may have changed how it counts.`;
+    return n === 1
+      ? "No way of counting weekdays produces the number of days your payslip charged — check the vacation dates and the days you entered."
+      : `No single way of counting fits all ${slips} — payroll may have changed how it counts.`;
   }
-  if (fit.observations === 0) {
-    return "No payslip vacation figures entered yet, so the rule is an assumption. Add “Genommene Urlaubstage” to a payslip to pin it down.";
-  }
-  if (fit.resolved) {
-    const n = fit.observations;
-    return `${fit.rules[0].label}, confirmed by ${n} payslip${n === 1 ? "" : "s"}.`;
-  }
-  return `${fit.rules.length} rules still fit (${fit.rules
-    .map((r) => r.label)
-    .join(", ")}) — they agree on whole weeks and differ only at a range's edges.`;
+  if (n === 0) return "Not checked against a payslip yet.";
+  if (fit.resolved) return `Confirmed by ${slips}.`;
+  const quantifier = fit.rules.length === 2 ? "both" : "all";
+  return `${joinLabels(fit.rules)} ${quantifier} fit your ${slips} equally well — they only differ when a vacation starts or ends mid-week.`;
 }
