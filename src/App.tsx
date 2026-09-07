@@ -10,7 +10,11 @@ import { formatDate, formatDateShort } from "./lib/format";
 import { shiftsToCsv, downloadText } from "./lib/exportCsv";
 import { estimateShift, sumEstimates, type Range } from "./lib/estimates";
 import { nextShiftFrom, shiftsInMonth } from "./lib/period";
-import { chargedDatesInMonth, vacationPayForMonth } from "./lib/vacationPayroll";
+import {
+  chargedDatesInMonth,
+  vacationCalendarDates,
+  vacationPayForMonth,
+} from "./lib/vacationPayroll";
 import { reconcileMonth } from "./lib/reconcile";
 import { consumeAuthRedirect, isConfigured, sync, syncOnOpen } from "./lib/driveSync";
 import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
@@ -384,7 +388,19 @@ function Home(props: {
     // total (it carries no tips — computeShiftEarnings zeroes those).
     const paidM = inMonth.filter(isPaidShift);
     const sickM = paidM.filter((s) => s.status === "sick");
-    const plannedM = inMonth.filter((s) => s.status === "planned" || s.status === "swapped-in");
+    // A planned shift on a day you're on vacation is a shift you will NOT work:
+    // the roster was imported before the vacation was booked. Counting it would pay
+    // you twice for that day — the estimated shift wage AND tips, plus the vacation
+    // day added below — which is exactly what makes a logged vacation read as a pay
+    // rise instead of time off. Drop them from the projection (the shift rows
+    // themselves are left alone; this is a money question, not a data edit).
+    //
+    // The whole vacation range is used, not just the charged weekdays: you're away
+    // on the uncharged Sunday too, so a shift rostered then isn't happening either.
+    const awayDates = vacationCalendarDates(vacations ?? []);
+    const plannedAll = inMonth.filter((s) => s.status === "planned" || s.status === "swapped-in");
+    const plannedM = plannedAll.filter((s) => !awayDates.has(s.date));
+    const plannedOnVacation = plannedAll.length - plannedM.length;
     const banked = sumEarnings(paidM, rates, payslips, settings);
     const projected = sumEstimates(plannedM, worked, rates, payslips, settings);
     // When the user resolved a payslip discrepancy in favour of the slip, the
@@ -414,6 +430,7 @@ function Home(props: {
       sickCount: sickM.length,
       sickNet: sumEarnings(sickM, rates, payslips, settings).netPay,
       plannedCount: plannedM.length,
+      plannedOnVacation,
       vacationDays: vacationPay.days,
       vacationNet: vacationPay.banked.net + vacationPay.projected.net,
       vacationHours: vacationPay.hours,
@@ -425,7 +442,7 @@ function Home(props: {
       net: { banked: bankedNet + vacBanked.net, projected: projected.netWage + vacProjected.net },
       tips: { banked: banked.usableTips, projected: projected.usableTips.median },
     };
-  }, [allShifts, cursor, worked, rates, payslips, settings, recon, vacationPay]);
+  }, [allShifts, cursor, worked, rates, payslips, settings, recon, vacationPay, vacations]);
 
   return (
     <div className="room home">
@@ -520,6 +537,13 @@ function Home(props: {
         <p className="muted sick-note">
           Includes {month.vacationDays} vacation day{month.vacationDays > 1 ? "s" : ""} ·{" "}
           {r1(month.vacationHours)} h paid · {eur(month.vacationNet)} net wage, no tips
+          {month.plannedOnVacation > 0 && (
+            <>
+              {" · "}
+              {month.plannedOnVacation} rostered shift
+              {month.plannedOnVacation > 1 ? "s" : ""} in that range left out (you're away)
+            </>
+          )}
         </p>
       )}
 

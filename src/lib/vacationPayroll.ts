@@ -255,17 +255,34 @@ export function vacationPayForMonth(
 }
 
 /**
- * Payroll days already taken in a calendar year. Prefers each vacation's snapshot
- * (what payroll charged at the time, so a later settings change can't rewrite
- * history) and recomputes only for records saved before this basis existed.
+ * Payroll days used in a calendar year.
+ *
+ * PAST vacations keep the snapshot taken when they were saved — that is what
+ * payroll actually charged, and a later settings change must not rewrite history.
+ * A vacation that hasn't finished yet is still an ESTIMATE, so it is recomputed
+ * from the current rule every time: booking a trip months ahead and then refining
+ * the counting rule should update what that trip is going to cost, not leave a
+ * stale figure sitting in your balance.
+ *
+ * Pass `todayIso` to get that split. WITHOUT it the snapshot always wins: a caller
+ * that can't say when "now" is gets the conservative, history-preserving answer
+ * rather than silently re-costing vacations that were already paid.
  */
 export function payrollDaysTakenInYear(
   vacations: Vacation[],
   year: number,
   weekdays: number[] = DEFAULT_CHARGEABLE_WEEKDAYS,
+  todayIso?: string,
 ): number {
   const y = String(year);
   return vacations
     .filter((v) => v.from.slice(0, 4) === y)
-    .reduce((sum, v) => sum + (v.payrollDays ?? countChargeableVacationDays(v.from, v.to, weekdays)), 0);
+    .reduce((sum, v) => {
+      const finished = todayIso == null || v.to < todayIso;
+      const days =
+        finished && v.payrollDays != null
+          ? v.payrollDays
+          : countChargeableVacationDays(v.from, v.to, weekdays);
+      return sum + days;
+    }, 0);
 }

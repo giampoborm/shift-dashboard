@@ -320,3 +320,46 @@ describe("vacationPayForMonth — observed pay across a mid-month raise", () => 
     expect(r.banked.gross).toBeCloseTo(36 * 10);
   });
 });
+
+describe("payrollDaysTakenInYear — past is history, future is an estimate", () => {
+  const MON_THU = [1, 2, 3, 4];
+  // Saved under a rule that charged 4; Tue-Sat charges 5 for Mon 3 - Sat 8 Aug.
+  const booked = (over: Partial<Vacation> = {}): Vacation => ({
+    from: "2026-08-03",
+    to: "2026-08-08",
+    werktage: 0,
+    scheduledCost: 0,
+    payrollDays: 4,
+    createdAt: "",
+    ...over,
+  });
+
+  it("keeps the snapshot for a vacation already taken", () => {
+    // Changing the rule afterwards must not rewrite what payroll charged.
+    expect(payrollDaysTakenInYear([booked()], 2026, DEFAULT_CHARGEABLE_WEEKDAYS, "2026-09-07")).toBe(4);
+  });
+
+  it("re-costs a vacation that hasn't happened yet under the current rule", () => {
+    // Booked ahead; the rule has since been refined. The balance should follow.
+    expect(payrollDaysTakenInYear([booked()], 2026, DEFAULT_CHARGEABLE_WEEKDAYS, "2026-07-01")).toBe(5);
+    expect(payrollDaysTakenInYear([booked()], 2026, MON_THU, "2026-07-01")).toBe(4);
+  });
+
+  it("treats a vacation still running as not yet settled", () => {
+    expect(payrollDaysTakenInYear([booked()], 2026, DEFAULT_CHARGEABLE_WEEKDAYS, "2026-08-05")).toBe(5);
+  });
+
+  it("recomputes when a past record predates the payroll basis", () => {
+    const old = booked({ payrollDays: undefined });
+    expect(payrollDaysTakenInYear([old], 2026, DEFAULT_CHARGEABLE_WEEKDAYS, "2026-09-07")).toBe(5);
+  });
+
+  it("keeps the snapshot when no date is supplied — the conservative default", () => {
+    expect(payrollDaysTakenInYear([booked()], 2026, DEFAULT_CHARGEABLE_WEEKDAYS)).toBe(4);
+  });
+
+  it("ignores vacations from other years", () => {
+    const lastYear = booked({ from: "2025-08-03", to: "2025-08-08" });
+    expect(payrollDaysTakenInYear([lastYear], 2026, DEFAULT_CHARGEABLE_WEEKDAYS, "2026-09-07")).toBe(0);
+  });
+});

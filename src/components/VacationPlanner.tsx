@@ -117,7 +117,7 @@ export function VacationPlanner(props: {
   const thisYear = vacations.filter((v) => v.from.slice(0, 4) === String(year));
   const takenWerktage = thisYear.reduce((s, v) => s + v.werktage, 0);
   const takenScheduled = thisYear.reduce((s, v) => s + (v.scheduledCost ?? 0), 0);
-  const takenPayroll = payrollDaysTakenInYear(vacations, year, chargeable);
+  const takenPayroll = payrollDaysTakenInYear(vacations, year, chargeable, today);
 
   const werktageBudget = settings.vacationWerktage;
   const propBudget = proportionalEntitlement(werktageBudget, calc.daysPerWeek);
