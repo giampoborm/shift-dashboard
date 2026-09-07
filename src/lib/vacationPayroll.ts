@@ -42,6 +42,7 @@
 import { eachDayOfInterval, format, getDay, parseISO } from "date-fns";
 import type { GrossRate, Payslip, Settings, Vacation } from "./types";
 import { netFactorForMonth, rateForDate } from "./earnings";
+import { paidChargedDatesInMonth } from "./vacationBudget";
 
 /** Weekdays payroll charges a vacation day for, getDay() numbering. Tue–Sat. */
 export const DEFAULT_CHARGEABLE_WEEKDAYS = [2, 3, 4, 5, 6];
@@ -234,7 +235,15 @@ export function vacationPayForMonth(
     };
   }
 
-  const dates = chargedDatesInMonth(month, vacations, settings.vacationChargeableWeekdays);
+  // Only days the entitlement still covers earn anything. Beyond the year's 20 it
+  // is unpaid leave — time off that pays €0 — so paying for it here would inflate
+  // the month. See lib/vacationBudget.ts.
+  const dates = paidChargedDatesInMonth(
+    month,
+    vacations,
+    settings.vacationPayrollDays,
+    settings.vacationChargeableWeekdays,
+  );
   const banked = { days: 0, gross: 0, net: 0 };
   const projected = { days: 0, gross: 0, net: 0 };
 

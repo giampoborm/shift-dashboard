@@ -31,6 +31,7 @@ import {
   impliedPerWeek,
   predictChargedDays,
 } from "../lib/vacationRuleFit";
+import { vacationBudgetUse } from "../lib/vacationBudget";
 import { formatDate } from "../lib/format";
 import type { GrossRate, Payslip, Settings, Shift } from "../lib/types";
 
@@ -113,6 +114,17 @@ export function VacationPlanner(props: {
     return nets.length ? { min: Math.min(...nets), max: Math.max(...nets) } : { min: 0, max: 0 };
   }, [from, to, fit, settings, rates, payslips]);
 
+  // How much of the finite entitlement this range actually uses. Days beyond the
+  // year's budget are still time off, but payroll pays nothing for them — so they
+  // must not be quoted as vacation pay. The slip's own "Tage verfuegbar" is this.
+  const budget = useMemo(
+    () => vacationBudgetUse(from, to, vacations, settings.vacationPayrollDays, chargeable),
+    [from, to, vacations, settings.vacationPayrollDays, chargeable],
+  );
+
+  // Vacation pay is quoted for the covered days only.
+  const paidShare = budget.charged > 0 ? budget.paid / budget.charged : 0;
+
   const year = new Date().getFullYear();
   const thisYear = vacations.filter((v) => v.from.slice(0, 4) === String(year));
   const takenWerktage = thisYear.reduce((s, v) => s + v.werktage, 0);
@@ -184,7 +196,7 @@ export function VacationPlanner(props: {
               value={predicted.agree ? String(calc.payrollDays) : `${predicted.min}–${predicted.max}`}
               sub={
                 predicted.agree
-                  ? `of your ${settings.vacationPayrollDays} · payroll basis`
+                  ? `${budget.availableBefore} left before this · ${budget.availableAfter} after`
                   : `of your ${settings.vacationPayrollDays} · depends on the counting rule`
               }
               accent
@@ -198,13 +210,15 @@ export function VacationPlanner(props: {
               label="Vacation pay"
               value={
                 predicted.agree
-                  ? `~€${Math.round(pay.net)}`
-                  : `~€${Math.round(payRange.min)}–${Math.round(payRange.max)}`
+                  ? `~€${Math.round(pay.net * paidShare)}`
+                  : `~€${Math.round(payRange.min * paidShare)}–${Math.round(payRange.max * paidShare)}`
               }
               sub={
-                predicted.agree
-                  ? `${calc.payrollDays} × ${r1(pay.dayHours)} h = ${r1(pay.hours)} h net`
-                  : `${predicted.min}–${predicted.max} days × ${r1(pay.dayHours)} h net`
+                budget.unpaid > 0
+                  ? `only ${budget.paid} of ${budget.charged} days still covered`
+                  : predicted.agree
+                    ? `${calc.payrollDays} × ${r1(pay.dayHours)} h = ${r1(pay.hours)} h net`
+                    : `${predicted.min}–${predicted.max} days × ${r1(pay.dayHours)} h net`
               }
             />
             <Card label="Calendar days" value={String(calc.calendarDays)} />
@@ -227,6 +241,17 @@ export function VacationPlanner(props: {
             )}{" "}
             A midnight-crossing shift counts as one vacation day.
           </p>
+          {budget.unpaid > 0 && (
+            <p className="err" style={{ fontSize: "0.82rem" }}>
+              <strong>
+                {budget.unpaid} of these {budget.charged} days would be unpaid leave.
+              </strong>{" "}
+              You have {budget.availableBefore} day{budget.availableBefore === 1 ? "" : "s"} left of
+              this year’s {settings.vacationPayrollDays}, so payroll pays{" "}
+              {budget.paid === 0 ? "none of this range" : `only the first ${budget.paid}`}. The rest
+              is still time off — it just earns nothing, and the vacation pay above reflects that.
+            </p>
+          )}
           <p className="muted" style={{ fontSize: "0.8rem" }}>
             Vacation pay is Urlaubsentgelt — it replaces the <em>wage</em> only, so the tips of a
             missed shift are simply gone and show on no payslip line.

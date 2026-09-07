@@ -15,6 +15,7 @@ import {
   vacationCalendarDates,
   vacationPayForMonth,
 } from "./lib/vacationPayroll";
+import { paidChargedDatesInMonth } from "./lib/vacationBudget";
 import { reconcileMonth } from "./lib/reconcile";
 import { consumeAuthRedirect, isConfigured, sync, syncOnOpen } from "./lib/driveSync";
 import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
@@ -431,6 +432,20 @@ function Home(props: {
       sickNet: sumEarnings(sickM, rates, payslips, settings).netPay,
       plannedCount: plannedM.length,
       plannedOnVacation,
+      // Charged days the entitlement no longer covers: unpaid leave, so they earn
+      // nothing and the month must not be read as if they did.
+      unpaidVacationDays:
+        chargedDatesInMonth(
+          format(cursor, "yyyy-MM"),
+          vacations ?? [],
+          settings.vacationChargeableWeekdays,
+        ).length -
+        paidChargedDatesInMonth(
+          format(cursor, "yyyy-MM"),
+          vacations ?? [],
+          settings.vacationPayrollDays,
+          settings.vacationChargeableWeekdays,
+        ).length,
       vacationDays: vacationPay.days,
       vacationNet: vacationPay.banked.net + vacationPay.projected.net,
       vacationHours: vacationPay.hours,
@@ -533,7 +548,7 @@ function Home(props: {
         </p>
       )}
 
-      {month.vacationDays > 0 && (
+      {(month.vacationDays > 0 || month.unpaidVacationDays > 0) && (
         <p className="muted sick-note">
           Includes {month.vacationDays} vacation day{month.vacationDays > 1 ? "s" : ""} ·{" "}
           {r1(month.vacationHours)} h paid · {eur(month.vacationNet)} net wage, no tips
@@ -542,6 +557,16 @@ function Home(props: {
               {" · "}
               {month.plannedOnVacation} rostered shift
               {month.plannedOnVacation > 1 ? "s" : ""} in that range left out (you're away)
+            </>
+          )}
+          {month.unpaidVacationDays > 0 && (
+            <>
+              {" · "}
+              <strong>
+                {month.unpaidVacationDays} more day
+                {month.unpaidVacationDays > 1 ? "s" : ""} off unpaid
+              </strong>{" "}
+              (past this year&rsquo;s entitlement)
             </>
           )}
         </p>

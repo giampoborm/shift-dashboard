@@ -363,3 +363,51 @@ describe("payrollDaysTakenInYear — past is history, future is an estimate", ()
     expect(payrollDaysTakenInYear([lastYear], 2026, DEFAULT_CHARGEABLE_WEEKDAYS, "2026-09-07")).toBe(0);
   });
 });
+
+describe("vacationPayForMonth — unpaid leave beyond the entitlement", () => {
+  const SPENT = { from: "2026-01-06", to: "2026-01-31", werktage: 0, scheduledCost: 0, createdAt: "" };
+  const AUG: Vacation = {
+    from: "2026-08-03",
+    to: "2026-08-11",
+    werktage: 0,
+    scheduledCost: 0,
+    createdAt: "",
+  };
+
+  it("pays the August trip in full while the budget covers it", () => {
+    const r = vacationPayForMonth("2026-08", [AUG], SETTINGS, RATES, PAYSLIPS, "2026-08-31");
+    expect(r.days).toBe(6);
+    expect(r.banked.gross).toBeCloseTo(558);
+  });
+
+  it("pays nothing once the year's 20 days are already spent", () => {
+    // January burned all 20; August is time off that earns no Urlaubsentgelt.
+    const r = vacationPayForMonth("2026-08", [SPENT, AUG], SETTINGS, RATES, PAYSLIPS, "2026-08-31");
+    expect(r.days).toBe(0);
+    expect(r.banked.gross).toBe(0);
+    expect(r.projected.gross).toBe(0);
+  });
+
+  it("pays only the covered part when the budget runs out mid-trip", () => {
+    // 18 days burned, so 2 of August's 6 are covered.
+    const burn: Vacation = {
+      from: "2026-02-03",
+      to: "2026-02-26",
+      werktage: 0,
+      scheduledCost: 0,
+      createdAt: "",
+    };
+    const r = vacationPayForMonth("2026-08", [burn, AUG], SETTINGS, RATES, PAYSLIPS, "2026-08-31");
+    expect(r.days).toBe(2);
+    expect(r.hours).toBe(12);
+    expect(r.banked.gross).toBeCloseTo(2 * 6 * 15.5);
+  });
+
+  it("still trusts the payslip over the budget for a month already paid", () => {
+    // The slip is fact; if payroll paid 6 days, they were paid, whatever we modelled.
+    const slips: Payslip[] = [{ ...PAYSLIPS[0], vacationDays: 6, vacationHours: 36 }];
+    const r = vacationPayForMonth("2026-08", [SPENT, AUG], SETTINGS, RATES, slips, "2026-08-31");
+    expect(r.observed).toBe(true);
+    expect(r.days).toBe(6);
+  });
+});
