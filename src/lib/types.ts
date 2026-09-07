@@ -66,15 +66,28 @@ export interface Payslip {
   /** When true, Home shows this slip's brutto/netto for the month instead of the
       figures derived from logged shifts (the user resolved a discrepancy). */
   useSlipTotals?: boolean;
+  /** Vacation days the slip charged ("Genommene Urlaubstage", Lohnart 620) and the
+      hours it paid for them ("Urlaub" STD, Lohnart 171). Optional, and undefined is
+      NOT zero — a slip without them simply carries no vacation evidence.
+
+      These two numbers are what lets the app fit the payroll counting rule to
+      reality instead of assuming it (see lib/vacationRuleFit.ts), and are the
+      ground truth reconciliation prefers over its own estimate for a past month. */
+  vacationDays?: number;
+  vacationHours?: number;
 }
 
-/** A recorded vacation period, with its Werktage cost snapshotted at save time. */
+/** A recorded vacation period, with each basis' cost snapshotted at save time. */
 export interface Vacation {
   id?: number;
   from: string; // ISO yyyy-MM-dd
   to: string; // ISO yyyy-MM-dd
   werktage: number; // Werktage-basis cost (Mon–Sat minus holidays) vs the 24 budget
   scheduledCost: number; // proportional basis: expected scheduled shifts in the range
+  /** Payroll basis: chargeable weekdays in the range — what the employer actually
+   *  deducts (Lohnart 620 "Genommene Urlaubstage"). Optional: vacations recorded
+   *  before this basis existed have none, and read as 0. */
+  payrollDays?: number;
   note?: string;
   createdAt: string;
 }
@@ -85,6 +98,16 @@ export interface Settings {
   tipPoolRate: number; // fraction cut for the prep shift, default 0.05
   closingTime: string; // "HH:mm" used when a slot ends in "Ende"
   vacationWerktage: number; // annual entitlement in Werktage (contract §8 = 24)
+
+  // --- Payroll vacation basis: how the employer ACTUALLY counts and pays a day
+  // off. Grounded in the August 2026 payslip; see lib/vacationPayroll.ts.
+  /** Annual entitlement in payroll days ("Tage LJ alt" on the slip = 20). */
+  vacationPayrollDays: number;
+  /** Hours one vacation day is paid at, flat ("Urlaub" STD ÷ "Genommene Urlaubstage" = 6). */
+  vacationDayHours: number;
+  /** Weekdays payroll charges a vacation day for, getDay() numbering (0=Sun … 6=Sat).
+   *  Default Tue–Sat: Mondays the venue is shut, Sundays payroll doesn't charge. */
+  vacationChargeableWeekdays: number[];
   recencyHalfLifeDays: number; // tip-estimate recency half-life in days (0 = weight all history equally)
 }
 

@@ -188,3 +188,59 @@ at different altitudes recurs throughout.
 - Redesign **aesthetic north star** + **Analysis/Tools room internals** (see
   **Now / Doing → Still open**). Structure/IA is resolved and shipped; Home is done.
 - Vacation entitlement counting basis still TBC with employer — see [[vacation-entitlement]].
+
+### ✅ Resolved: the payroll vacation counting rule (2026-09-07)
+
+**Settled by payroll.** The August vacation ran to the **11th**, and **Mondays are not
+chargeable**. Those two facts together make **Tue–Sat** the unique rule: it charges
+Tue4 Wed5 Thu6 Fri7 Sat8 Tue11 = the 6 days the slip shows, while Mon–Fri over the
+same range would have charged 7. The previously-held work is therefore
+evidence-backed, and the hold is lifted.
+
+Already-settled facts it rests on, unchanged: a vacation day is paid a **flat 6.00 h**
+(36 ÷ 6, corroborated by July's single sick day at 6,00 h LFZ Krank), and payroll
+counts the **calendar, not the roster**, at **5 charged days per week** (the 3–9 Aug
+roster lists Gianpaolo on zero days, and 5/week × 4 weeks = the 20-day entitlement).
+
+### 🧪 The general logic that replaced the hand-picked rule
+
+Rather than hardcode Tue–Sat and re-open this question the next time payroll changes
+anything, the app now **fits the rule to evidence**. The move that makes it work:
+
+> **Every payslip is a labelled example.** A slip prints `Genommene Urlaubstage` and
+> `Urlaub … STD` for a range the `vacations` table already holds — an input/output pair.
+
+- `Payslip` gained optional `vacationDays` / `vacationHours`. **Undefined means "no
+  vacation evidence", explicitly not zero.**
+- `src/lib/vacationRuleFit.ts` holds a hypothesis space of 10 candidate rules (contiguous
+  4–7 day runs in a Mon-first week) and keeps only those reproducing **every** slip.
+  `impliedPerWeek` prunes by the entitlement (20 payroll days ÷ 4 weeks = 5/week).
+  Reproduces the hand-reasoning exactly: August alone leaves `{Tue–Sat, Mon–Thu}`;
+  adding the 5-day/week constraint leaves Tue–Sat alone.
+- `predictChargedDays` returns **min/max/agree** across the survivors. `agree` is the
+  gate day-level advice hangs off — it renders only when the surviving rules agree on
+  *that specific range*, and self-hides when they don't. **The deleted value-per-day
+  card and wasted-days warning are now safe to rebuild behind that gate.**
+- **Estimate forward, observe backward:** `vacationPayForMonth` prefers the slip's own
+  figures over its prediction whenever the slip has them. Never re-derive a number you
+  have been handed — this also stops a later settings change rewriting a paid month.
+- `reconcileMonth` gained `cause` attribution (`vacation-rule` / `hours` / `unknown`),
+  plus `ruleStale` and `needsAttention`. **`ruleStale` is deliberately independent of
+  `discrepant`:** because vacation pay now takes its figures from the slip, the euros
+  reconcile by construction, so a drifted counting rule would otherwise leave no trace.
+
+Settings shows the live fit ("Tue–Sat, confirmed by 1 payslip" / "2 rules still fit …")
+with a one-click **Apply fitted rule**, replacing a paragraph of prose a human had to
+keep editing as the evidence moved.
+
+**Deliberately out of scope:** public-holiday exclusion. Deciding it needs a vacation
+range that actually contains a holiday, and none does yet; adding the dimension now
+would either invent an answer or report permanent false ambiguity. It slots in as a
+second field on `ChargeRule` when such a range exists.
+
+Still removed at the user's request: the **"tips forgone"** card. Vacation pay replaces
+wage only and the forfeited tips are real, but it's a number he can't act on — noise,
+not insight. Scope stays a **calculator + logger**, not an optimizer.
+
+**Not settled:** vacation entitlement counting basis with the employer — see
+[[vacation-entitlement]].

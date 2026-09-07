@@ -21,7 +21,19 @@ const data = (shifts: Shift[]): SnapshotData => ({
   shifts,
   rates: [{ id: 1, effectiveFrom: "2026-01-01", rate: 14.5 }],
   payslips: [],
-  settings: [{ id: 1, userName: "G", tipPoolRate: 0.05, closingTime: "01:00", vacationWerktage: 24, recencyHalfLifeDays: 45 }],
+  settings: [
+    {
+      id: 1,
+      userName: "G",
+      tipPoolRate: 0.05,
+      closingTime: "01:00",
+      vacationWerktage: 24,
+      vacationPayrollDays: 20,
+      vacationDayHours: 6,
+      vacationChargeableWeekdays: [2, 3, 4, 5, 6],
+      recencyHalfLifeDays: 45,
+    },
+  ],
   vacations: [],
 });
 

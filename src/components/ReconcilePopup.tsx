@@ -54,9 +54,34 @@ export function ReconcilePopup(props: { recon: Reconciliation; onClose: () => vo
 
         <p className="recon-note">
           "Logged" is your {recon.loggedShifts} worked shift{recon.loggedShifts === 1 ? "" : "s"} ×
-          the rate table; netto uses this slip's own net factor. A gap means the hours disagree —
-          a missed shift, payroll counting differently, or a correction/bonus on the slip.
+          the rate table
+          {recon.vacationDays > 0 && (
+            <>
+              , plus {recon.vacationDays} vacation day{recon.vacationDays === 1 ? "" : "s"} at a flat{" "}
+              {recon.vacationHours.toFixed(2)} h (the slip's <em>Urlaub</em> line)
+            </>
+          )}
+          ; netto uses this slip's own net factor.{" "}
+          {recon.cause === "hours" &&
+            "The gap is in the hours — a missed shift, or payroll counting differently."}
+          {recon.cause === "unknown" &&
+            "The hours agree, so the gap is something not modelled here — a correction or a bonus on the slip."}
+          {recon.cause === "none" &&
+            "Everything lines up."}
+          {recon.cause === "vacation-rule" &&
+            "The gap traces to the vacation count, below."}
         </p>
+
+        {recon.ruleStale && recon.vacationDaysExpected != null && (
+          <p className="recon-note warn">
+            <strong>⚠ The vacation counting rule looks out of date.</strong> This slip charged{" "}
+            {recon.vacationDays} day{recon.vacationDays === 1 ? "" : "s"}, but the rule set in
+            Settings predicts {recon.vacationDaysExpected} for the vacation you recorded. The
+            month's money is still right — it uses the slip's own figures — but future vacation
+            estimates will drift until the rule is refitted. Open ⚙ Settings → Payroll vacation
+            rule, where the fit against every payslip is shown.
+          </p>
+        )}
 
         {slip.useSlipTotals ? (
           <>

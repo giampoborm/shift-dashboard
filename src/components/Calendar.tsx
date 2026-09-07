@@ -16,7 +16,8 @@ import {
 } from "date-fns";
 import { computeShiftEarnings, isPaidShift, netFactorForMonth } from "../lib/earnings";
 import { estimateShift } from "../lib/estimates";
-import { avgGrossPerWorkedDay, estimateVacationPayDays } from "../lib/vacationPay";
+import { chargeableVacationDates } from "../lib/vacationPayroll";
+import { rateForDate } from "../lib/earnings";
 import type { GrossRate, Payslip, Settings, Shift, Vacation } from "../lib/types";
 
 const WEEK_HEADERS = ["M", "T", "W", "T", "F", "S", "S"];
@@ -67,20 +68,21 @@ export function Calendar(props: {
     return vacations?.find((v) => iso >= v.from && iso <= v.to);
   }
 
-  // Which specific dates within recorded vacations are estimated PAID (a day
-  // you'd normally be rostered but that's gone from the plan) + their estimated
-  // €, so the calendar can show the same forward guess VacationPlanner totals.
+  // Which specific dates within recorded vacations payroll CHARGES a vacation day
+  // for, and the net wage each one pays (a flat day at the rate in force then).
+  // Deterministic — the same arithmetic the payslip runs, so these figures can be
+  // checked against it rather than merely trusted. See lib/vacationPayroll.ts.
   const paidVacationDays = useMemo(() => {
-    const map = new Map<string, number>(); // date -> estimated net €
+    const map = new Map<string, number>(); // date -> net €
     for (const v of vacations ?? []) {
-      const avgDayGross = avgGrossPerWorkedDay(shifts, rates, v.to);
-      for (const day of estimateVacationPayDays(v.from, v.to, shifts, shifts)) {
-        const { factor } = netFactorForMonth(day.date.slice(0, 7), payslips);
-        map.set(day.date, avgDayGross * (factor ?? 1));
+      for (const date of chargeableVacationDates(v.from, v.to, settings.vacationChargeableWeekdays)) {
+        const { factor } = netFactorForMonth(date.slice(0, 7), payslips);
+        const dayGross = settings.vacationDayHours * (rateForDate(date, rates) ?? 0);
+        map.set(date, dayGross * (factor ?? 1));
       }
     }
     return map;
-  }, [vacations, shifts, rates, payslips]);
+  }, [vacations, settings, rates, payslips]);
 
   // Per-day take-home and the tip slice of it (worked/sick actuals, else estimated
   // median). A sick day contributes its wage and no tips — computeShiftEarnings
@@ -137,7 +139,7 @@ export function Calendar(props: {
                   className={`cal-vacation${paidVacEur != null ? " paid" : ""}`}
                   title={vac.note ?? "vacation"}
                 >
-                  {paidVacEur != null ? `paid vac. ~€${Math.round(paidVacEur)}` : "vacation"}
+                  {paidVacEur != null ? `vac. day · €${Math.round(paidVacEur)}` : "vacation (free)"}
                   {vac.note ? ` · ${vac.note}` : ""}
                 </div>
               )}
@@ -165,7 +167,7 @@ export function Calendar(props: {
         })}
       </div>
       <p className="muted" style={{ fontSize: "0.76rem" }}>
-        Solid chip = worked · outlined = planned · struck = swapped · dashed amber = sick (paid, no tips). Day total = take-home (worked actuals, else estimated median); <em>tips</em> is the tip slice of it. Within a recorded vacation, "paid vac." marks days you'd normally be rostered but aren't (a plan-vs-history guess) — plain "vacation" days aren't estimated as paid.
+        Solid chip = worked · outlined = planned · struck = swapped · dashed amber = sick (paid, no tips). Day total = take-home (worked actuals, else estimated median); <em>tips</em> is the tip slice of it. Within a recorded vacation, "vac. day" is a day payroll charges against your balance and pays a flat {settings.vacationDayHours} h for; "vacation (free)" days cost you nothing and pay nothing.
       </p>
     </div>
   );

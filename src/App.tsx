@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { addMonths, endOfMonth, format, startOfMonth, subMonths } from "date-fns";
+import { addMonths, format, startOfMonth, subMonths } from "date-fns";
 import { db, ensureSeeded, getSettings } from "./lib/db";
 import { importHistoryCsv, type ImportWarning } from "./lib/importHistory";
 import { importPlanCsv, plannedHours } from "./lib/importPlan";
@@ -10,7 +10,7 @@ import { formatDate, formatDateShort } from "./lib/format";
 import { shiftsToCsv, downloadText } from "./lib/exportCsv";
 import { estimateShift, sumEstimates, type Range } from "./lib/estimates";
 import { nextShiftFrom, shiftsInMonth } from "./lib/period";
-import { estimateVacationPay } from "./lib/vacationPay";
+import { chargedDatesInMonth, vacationPayForMonth } from "./lib/vacationPayroll";
 import { reconcileMonth } from "./lib/reconcile";
 import { consumeAuthRedirect, isConfigured, sync, syncOnOpen } from "./lib/driveSync";
 import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
@@ -28,6 +28,7 @@ const VacationPlanner = lazy(() =>
 const Charts = lazy(() => import("./components/Charts").then((m) => ({ default: m.Charts })));
 
 const eur = (n: number) => `€${n.toFixed(2)}`;
+const r1 = (n: number) => Math.round(n * 10) / 10;
 const eur0 = (n: number) => `€${Math.round(n)}`;
 const eurRange = (r: Range) => `€${Math.round(r.p25)}–${Math.round(r.p75)}`;
 
@@ -278,6 +279,7 @@ export function App() {
           settings={settings!}
           rates={rates!}
           payslips={payslips!}
+          vacations={vacations ?? []}
           onSettingsSaved={setSettings}
           onDataReplaced={refreshSettings}
         />
@@ -345,10 +347,35 @@ function Home(props: {
     };
   }, [next, worked, rates, payslips, settings]);
 
+  const todayIso = format(new Date(), "yyyy-MM-dd");
+
+  // Paid vacation landing in the viewed month. Deterministic payroll arithmetic
+  // (chargeable weekdays x a flat day), not a guess — see lib/vacationPayroll.ts.
+  const vacationPay = useMemo(
+    () => vacationPayForMonth(format(cursor, "yyyy-MM"), vacations, settings, rates, payslips, todayIso),
+    [cursor, vacations, settings, rates, payslips, todayIso],
+  );
+
   // Logged-vs-payslip check for the viewed month; drives the "!" on the salary card.
+  // Vacation hours go in: the slip pays them on its own line, so a month with time
+  // off would otherwise always read as short by exactly those hours.
+  //
+  // `expectedDays` is what the counting rule predicts, passed alongside so that a
+  // slip carrying its own figure can catch the rule drifting out of date — see
+  // lib/vacationRuleFit.ts.
   const recon = useMemo(
-    () => reconcileMonth(format(cursor, "yyyy-MM"), allShifts, rates, payslips),
-    [allShifts, cursor, rates, payslips],
+    () => {
+      const m = format(cursor, "yyyy-MM");
+      return reconcileMonth(m, allShifts, rates, payslips, {
+        days: vacationPay.days,
+        hours: vacationPay.hours,
+        gross: vacationPay.banked.gross + vacationPay.projected.gross,
+        observed: vacationPay.observed,
+        expectedDays: chargedDatesInMonth(m, vacations, settings.vacationChargeableWeekdays)
+          .length,
+      });
+    },
+    [allShifts, cursor, rates, payslips, vacationPay, vacations, settings],
   );
 
   const month = useMemo(() => {
@@ -367,28 +394,17 @@ function Home(props: {
     const bankedGross = slip ? slip.totalGross : banked.grossPay;
     const bankedNet = slip ? slip.totalNet : banked.netPay;
 
-    // Vacation days generate no `planned` shift rows, so sumEstimates above never
-    // sees them — add a light estimate of the paid-vacation gap for any recorded
-    // vacation overlapping this month (clipped to month bounds). See vacationPay.ts.
+    // Vacation days generate no shift rows at all — a vacation is a RANGE, not a set
+    // of shifts — so neither sumEarnings nor sumEstimates above sees them. Add the
+    // payroll figure for any recorded vacation overlapping this month, split by
+    // whether the day has already passed: a past vacation day is banked (a known
+    // amount the slip will show), a future one is projected.
     // Skipped once the payslip is authoritative for this month (`slip` set above):
-    // the real totalGross/totalNet already include whatever the employer actually
-    // paid for those days, so adding our guess on top would double-count it. This
-    // is how the estimate "resolves itself" once the payslip lands — no manual redo.
-    const monthStartIso = format(cursor, "yyyy-MM-dd");
-    const monthEndIso = format(endOfMonth(cursor), "yyyy-MM-dd");
-    let vacGross = 0;
-    let vacNet = 0;
-    if (!slip) {
-      for (const v of vacations) {
-        if (v.to < monthStartIso || v.from > monthEndIso) continue;
-        const clipFrom = v.from > monthStartIso ? v.from : monthStartIso;
-        const clipTo = v.to < monthEndIso ? v.to : monthEndIso;
-        const inRange = allShifts.filter((s) => s.date >= clipFrom && s.date <= clipTo);
-        const est = estimateVacationPay(clipFrom, clipTo, allShifts, inRange, rates, payslips);
-        vacGross += est.gross;
-        vacNet += est.net;
-      }
-    }
+    // its real totalGross/totalNet already include the Urlaub line, so adding ours
+    // on top would double-count it. That's how this resolves itself once the payslip
+    // lands — no manual redo.
+    const vacBanked = slip ? { gross: 0, net: 0, days: 0 } : vacationPay.banked;
+    const vacProjected = slip ? { gross: 0, net: 0, days: 0 } : vacationPay.projected;
 
     // One row per money category, each split into what's banked (worked actuals) vs
     // projected (planned estimates + any estimated paid-vacation days) — the
@@ -398,12 +414,18 @@ function Home(props: {
       sickCount: sickM.length,
       sickNet: sumEarnings(sickM, rates, payslips, settings).netPay,
       plannedCount: plannedM.length,
-      takeHome: { banked: bankedNet + banked.usableTips, projected: projected.takeHome.median + vacNet },
-      gross: { banked: bankedGross, projected: projected.grossWage + vacGross },
-      net: { banked: bankedNet, projected: projected.netWage + vacNet },
+      vacationDays: vacationPay.days,
+      vacationNet: vacationPay.banked.net + vacationPay.projected.net,
+      vacationHours: vacationPay.hours,
+      takeHome: {
+        banked: bankedNet + banked.usableTips + vacBanked.net,
+        projected: projected.takeHome.median + vacProjected.net,
+      },
+      gross: { banked: bankedGross + vacBanked.gross, projected: projected.grossWage + vacProjected.gross },
+      net: { banked: bankedNet + vacBanked.net, projected: projected.netWage + vacProjected.net },
       tips: { banked: banked.usableTips, projected: projected.usableTips.median },
     };
-  }, [allShifts, cursor, worked, rates, payslips, settings, recon, vacations]);
+  }, [allShifts, cursor, worked, rates, payslips, settings, recon, vacationPay]);
 
   return (
     <div className="room home">
@@ -469,11 +491,15 @@ function Home(props: {
               onClick={() => setSideView(sideView === "brutto" ? "netto" : "brutto")}
               title="Tap to switch brutto / netto"
             />
-            {recon && (recon.discrepant || recon.slip.useSlipTotals) && (
+            {recon && (recon.needsAttention || recon.slip.useSlipTotals) && (
               <button
                 className={`recon-badge ${recon.slip.useSlipTotals ? "resolved" : ""}`}
                 onClick={() => setShowRecon(true)}
-                title="Logged shifts and this month's payslip disagree — tap for details"
+                title={
+                  recon.ruleStale
+                    ? "The payslip charged a different number of vacation days than the counting rule predicted — tap for details"
+                    : "Logged shifts and this month's payslip disagree — tap for details"
+                }
                 aria-label="Payslip discrepancy details"
               >
                 !
@@ -487,6 +513,13 @@ function Home(props: {
         <p className="muted sick-note">
           Includes {month.sickCount} sick day{month.sickCount > 1 ? "s" : ""} ·{" "}
           {eur(month.sickNet)} net wage, no tips
+        </p>
+      )}
+
+      {month.vacationDays > 0 && (
+        <p className="muted sick-note">
+          Includes {month.vacationDays} vacation day{month.vacationDays > 1 ? "s" : ""} ·{" "}
+          {r1(month.vacationHours)} h paid · {eur(month.vacationNet)} net wage, no tips
         </p>
       )}
 

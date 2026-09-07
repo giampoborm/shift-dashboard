@@ -1,13 +1,36 @@
-// Vacation planner. Shows TWO consistent accountings of the same 4-weeks-off budget:
-//  1. Werktage basis (contract/paperwork): Mon–Sat minus Berlin public holidays, vs 24.
-//  2. Proportional basis (your reality): budget = 24 × your avg days/week ÷ 6 (~16),
+// Vacation planner. Shows THREE accountings of the same time off — same weeks,
+// different units, never to be mixed:
+//  0. Payroll basis (the headline, and the only auditable one): chargeable weekdays
+//     in the range vs a 20-day entitlement, paid a flat 6 h each. Reverse-engineered
+//     from the 8/2026 payslip — see lib/vacationPayroll.ts for the evidence AND for
+//     what that evidence does not settle (which five weekdays).
+//  1. Werktage basis (contract paperwork): Mon–Sat minus Berlin public holidays, vs 24.
+//  2. Proportional basis (your roster): budget = 24 × your avg days/week ÷ 6 (~16),
 //     cost = estimated scheduled shifts in the range. A night shift = 1 day.
-// See lib/vacation.ts for the model.
+//
+// Scope note: this is a CALCULATOR and a LOG, not an optimizer. It answers "what will
+// this range cost and pay me" and "what have I already spent". Advice about placing a
+// vacation well needs the chargeable-weekday rule confirmed by payroll first — until
+// then it would be confident guessing. See lib/vacation.ts for the model.
 
 import { useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../lib/db";
-import { calcVacation, estimateVacationPay, proportionalEntitlement } from "../lib/vacation";
+import {
+  calcVacation,
+  countChargeableVacationDays,
+  describeChargeableWeekdays,
+  payrollDaysTakenInYear,
+  proportionalEntitlement,
+  vacationCalendarDates,
+  vacationPayrollPay,
+} from "../lib/vacation";
+import {
+  describeFit,
+  fitChargeRules,
+  impliedPerWeek,
+  predictChargedDays,
+} from "../lib/vacationRuleFit";
 import { formatDate } from "../lib/format";
 import type { GrossRate, Payslip, Settings, Shift } from "../lib/types";
 
@@ -33,21 +56,47 @@ export function VacationPlanner(props: {
   const [to, setTo] = useState(addDaysIso(today, 13));
   const [note, setNote] = useState("");
 
-  const calc = useMemo(() => calcVacation(from, to, allShifts), [from, to, allShifts]);
-
-  // Shifts still on the roster within the draft range — an already-imported plan
-  // (e.g. a partial week) offsets how many days count as paid vacation.
-  const payEst = useMemo(() => {
-    if (to < from) return null;
-    const inRange = allShifts.filter((s) => s.date >= from && s.date <= to);
-    return estimateVacationPay(from, to, allShifts, inRange, rates, payslips);
-  }, [from, to, allShifts, rates, payslips]);
-
   const vacations = useLiveQuery(() => db.vacations.orderBy("from").toArray(), []) ?? [];
+  const chargeable = settings.vacationChargeableWeekdays;
+
+  // Every day already spent on vacation — erased from the roster observation window
+  // so past time off can't read as "he isn't scheduled much" and shrink the
+  // proportional entitlement. The whole range, not just the charged days: you were
+  // away on the uncharged Sundays too.
+  const pastVacationDates = useMemo(() => vacationCalendarDates(vacations), [vacations]);
+
+  const calc = useMemo(
+    () =>
+      calcVacation(from, to, allShifts, {
+        chargeableWeekdays: chargeable,
+        vacationDates: pastVacationDates,
+      }),
+    [from, to, allShifts, chargeable, pastVacationDates],
+  );
+
+  // What payroll will actually pay for this range — arithmetic, not a guess.
+  const pay = useMemo(
+    () => vacationPayrollPay(from, to, settings, rates, payslips),
+    [from, to, settings, rates, payslips],
+  );
+
+  // The counting rule fitted to the payslips, and what THIS range costs under every
+  // rule still standing. When they agree the app can speak plainly; when they don't,
+  // the spread is shown rather than a confident number picked arbitrarily.
+  const fit = useMemo(
+    () => fitChargeRules(payslips, vacations, { perWeek: impliedPerWeek(settings) }),
+    [payslips, vacations, settings],
+  );
+  const predicted = useMemo(
+    () => predictChargedDays(from, to, fit.rules),
+    [from, to, fit],
+  );
+
   const year = new Date().getFullYear();
   const thisYear = vacations.filter((v) => v.from.slice(0, 4) === String(year));
   const takenWerktage = thisYear.reduce((s, v) => s + v.werktage, 0);
   const takenScheduled = thisYear.reduce((s, v) => s + (v.scheduledCost ?? 0), 0);
+  const takenPayroll = payrollDaysTakenInYear(vacations, year, chargeable);
 
   const werktageBudget = settings.vacationWerktage;
   const propBudget = proportionalEntitlement(werktageBudget, calc.daysPerWeek);
@@ -61,6 +110,7 @@ export function VacationPlanner(props: {
       to,
       werktage: calc.werktage,
       scheduledCost: r1(calc.scheduleCost.expected),
+      payrollDays: calc.payrollDays,
       note: note.trim() || undefined,
       createdAt: new Date().toISOString(),
     });
@@ -71,22 +121,29 @@ export function VacationPlanner(props: {
     <div className="vacation">
       <div className="vac-budgets">
         <Budget
+          title="Payroll basis (what HR deducts)"
+          taken={takenPayroll}
+          budget={settings.vacationPayrollDays}
+          unit={`days (${describeChargeableWeekdays(chargeable)})`}
+          highlight
+        />
+        <Budget
           title="Proportional basis (your shifts)"
           taken={r1(takenScheduled)}
           budget={Math.round(propBudget)}
           unit={`shifts · ~${r1(calc.daysPerWeek)} days/week`}
-          highlight
         />
         <Budget
-          title="Werktage basis (paperwork)"
+          title="Werktage basis (contract §8)"
           taken={takenWerktage}
           budget={werktageBudget}
           unit="Werktage (Mon–Sat)"
         />
       </div>
       <p className="muted" style={{ fontSize: "0.78rem" }}>
-        Both describe the same ~4 weeks off — just different units. The proportional basis
-        only counts days you'd actually have worked; don't mix it with the 24 budget.
+        All three describe the same ~4 weeks off — just different units, so never mix
+        consumption from one with the budget of another. The payroll basis is the one
+        your payslip shows (“Genommene Urlaubstage”), so it's the balance that's real.
       </p>
 
       <div className="vac-inputs">
@@ -101,41 +158,55 @@ export function VacationPlanner(props: {
       ) : (
         <>
           <div className="cards">
-            <Card label="Calendar days" value={String(calc.calendarDays)} />
+            <Card
+              label="Days charged"
+              value={predicted.agree ? String(calc.payrollDays) : `${predicted.min}–${predicted.max}`}
+              sub={
+                predicted.agree
+                  ? `of your ${settings.vacationPayrollDays} · payroll basis`
+                  : `of your ${settings.vacationPayrollDays} · depends on the counting rule`
+              }
+              accent
+            />
             <Card
               label="Shifts you'd miss"
               value={rng(calc.scheduleCost.low, calc.scheduleCost.high)}
-              sub={`≈ ${r1(calc.scheduleCost.expected)} (proportional cost)`}
-              accent
+              sub={`≈ ${r1(calc.scheduleCost.expected)} from your roster`}
             />
-            <Card label="Werktage" value={String(calc.werktage)} sub="vs your 24" />
+            <Card
+              label="Vacation pay"
+              value={`~€${Math.round(pay.net)}`}
+              sub={`${calc.payrollDays} × ${r1(pay.dayHours)} h = ${r1(pay.hours)} h net`}
+            />
+            <Card label="Calendar days" value={String(calc.calendarDays)} />
+            <Card label="Werktage" value={String(calc.werktage)} sub={`vs your ${werktageBudget}`} />
             <Card label="Arbeitstage" value={String(calc.arbeitstage)} sub="Mon–Fri basis" />
-            {payEst && payEst.days > 0 && (
-              <Card
-                label="Est. paid vacation"
-                value={`${r1(payEst.days)} d`}
-                sub={`~€${Math.round(payEst.net)} net`}
-                accent
-              />
-            )}
           </div>
 
           <p className="muted" style={{ fontSize: "0.8rem" }}>
-            Counting rule is an assumption from your contract (§8) — confirm the basis your
-            employer actually uses. A midnight-crossing shift counts as one vacation day.
+            Payroll charges <strong>{describeChargeableWeekdays(chargeable)}</strong> off your{" "}
+            {settings.vacationPayrollDays} and pays each one a flat{" "}
+            <strong>{r1(settings.vacationDayHours)} h</strong> — not your real shift length. That
+            rule is <strong>fitted to your payslips</strong>, not assumed: {describeFit(fit)}
+            {!predicted.agree && (
+              <>
+                {" "}
+                For this particular range they disagree ({predicted.min}–{predicted.max} days),
+                because it starts or ends mid-week — the surviving rules always agree on whole
+                weeks and part company only at the edges. Enter another slip's “Genommene
+                Urlaubstage” in Settings to settle it.
+              </>
+            )}{" "}
+            A midnight-crossing shift counts as one vacation day.
           </p>
-          {payEst && payEst.days > 0 && (
-            <p className="muted" style={{ fontSize: "0.8rem" }}>
-              Paid-vacation estimate: days your usual roster minus what's still actually
-              scheduled in this range (from any imported plan), × your recent average day's
-              gross (€{r1(payEst.avgDayGross)}). A light forward guess — the payslip settles it
-              for real once it arrives.
-            </p>
-          )}
+          <p className="muted" style={{ fontSize: "0.8rem" }}>
+            Vacation pay is Urlaubsentgelt — it replaces the <em>wage</em> only, so the tips of a
+            missed shift are simply gone and show on no payslip line.
+          </p>
 
           {calc.holidays.length > 0 && (
             <p className="muted" style={{ fontSize: "0.8rem" }}>
-              Public holidays in range (free, not counted):{" "}
+              Public holidays in range (free under the Werktage basis, still charged by payroll):{" "}
               {calc.holidays.map((h) => `${formatDate(h.date)} ${h.name}`).join(" · ")}
             </p>
           )}
@@ -148,7 +219,7 @@ export function VacationPlanner(props: {
             <thead>
               <tr>
                 <th className="l">From</th><th className="l">To</th>
-                <th>Shifts</th><th>Werktage</th><th className="l">Note</th><th></th>
+                <th>Charged</th><th>Shifts</th><th>Werktage</th><th className="l">Note</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -156,6 +227,7 @@ export function VacationPlanner(props: {
                 <tr key={v.id}>
                   <td className="l">{formatDate(v.from)}</td>
                   <td className="l">{formatDate(v.to)}</td>
+                  <td>{v.payrollDays ?? countChargeableVacationDays(v.from, v.to, chargeable)}</td>
                   <td>{r1(v.scheduledCost ?? 0)}</td>
                   <td>{v.werktage}</td>
                   <td className="l muted">{v.note ?? ""}</td>
@@ -197,11 +269,12 @@ function Budget(props: {
   );
 }
 
-function Card(props: { label: string; value: string; sub?: string; accent?: boolean }) {
+function Card(props: { label: string; value: string; sub?: string; accent?: boolean; bad?: boolean }) {
+  const color = props.bad ? "var(--bad)" : props.accent ? "var(--good)" : undefined;
   return (
     <div className="card">
       <div className="label">{props.label}</div>
-      <div className="value" style={props.accent ? { color: "var(--good)" } : undefined}>{props.value}</div>
+      <div className="value" style={color ? { color } : undefined}>{props.value}</div>
       {props.sub && <div className="sub">{props.sub}</div>}
     </div>
   );

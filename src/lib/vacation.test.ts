@@ -1,17 +1,15 @@
 import { describe, it, expect } from "vitest";
 import {
-  avgGrossPerWorkedDay,
   avgWorkingDaysPerWeek,
   berlinHolidays,
   buildWeekdayProfile,
   calcVacation,
   countWerktage,
   estimateScheduledCost,
-  estimateVacationPay,
-  estimateVacationPayDays,
   proportionalEntitlement,
+  vacationCalendarDates,
 } from "./vacation";
-import type { GrossRate, Payslip, Shift } from "./types";
+import type { Shift } from "./types";
 
 function shift(date: string, crossesMidnight = false, status: Shift["status"] = "worked"): Shift {
   return {
@@ -146,97 +144,6 @@ describe("calcVacation", () => {
   });
 });
 
-describe("avgGrossPerWorkedDay", () => {
-  const rates: GrossRate[] = [{ effectiveFrom: "2026-01-01", rate: 15 }];
-
-  it("averages recent worked shifts within the trailing window", () => {
-    const worked = [shift("2026-06-05"), shift("2026-06-12"), shift("2026-06-19")]; // 6h * 15 = 90 each
-    expect(avgGrossPerWorkedDay(worked, rates, "2026-06-26")).toBeCloseTo(90);
-  });
-
-  it("falls back to all history when the trailing window is empty", () => {
-    const worked = [shift("2020-01-03")]; // long before the window
-    expect(avgGrossPerWorkedDay(worked, rates, "2026-06-26")).toBeCloseTo(90);
-  });
-
-  it("returns 0 with no worked history", () => {
-    expect(avgGrossPerWorkedDay([], rates, "2026-06-26")).toBe(0);
-  });
-});
-
-describe("estimateVacationPay", () => {
-  const rates: GrossRate[] = [{ effectiveFrom: "2026-01-01", rate: 15 }];
-  const payslips: Payslip[] = [{ month: "2026-08", totalGross: 1000, totalHours: 100, totalNet: 800 }];
-  // Friday-only roster, 3 samples.
-  const worked = [shift("2026-06-05"), shift("2026-06-12"), shift("2026-06-19")];
-
-  it("with no plan yet, costs the full profile-expected days", () => {
-    // A single Friday away, nothing on the roster for it.
-    const est = estimateVacationPay("2026-08-07", "2026-08-07", worked, [], rates, payslips);
-    expect(est.days).toBeCloseTo(1);
-    expect(est.avgDayGross).toBeCloseTo(90);
-    expect(est.gross).toBeCloseTo(90);
-    expect(est.net).toBeCloseTo(90 * 0.8); // payslip net factor
-  });
-
-  it("a shift still on the roster in the range offsets the estimate", () => {
-    // Away Mon–Sun, but a Friday shift is already planned within it => not vacation.
-    const stillRostered = [shift("2026-08-07", false, "planned")]; // Friday
-    const est = estimateVacationPay("2026-08-03", "2026-08-09", worked, stillRostered, rates, payslips);
-    expect(est.days).toBeCloseTo(0);
-    expect(est.gross).toBe(0);
-  });
-
-  it("swapped-out shifts in range don't count as still-rostered", () => {
-    const swappedOut = [shift("2026-08-07", false, "swapped-out")];
-    const est = estimateVacationPay("2026-08-07", "2026-08-07", worked, swappedOut, rates, payslips);
-    expect(est.days).toBeCloseTo(1);
-  });
-
-  it("returns zero for an inverted range", () => {
-    expect(estimateVacationPay("2026-08-10", "2026-08-01", worked, [], rates, payslips).days).toBe(0);
-  });
-});
-
-describe("estimateVacationPayDays", () => {
-  // Friday-only roster, 3 samples.
-  const worked = [shift("2026-06-05"), shift("2026-06-12"), shift("2026-06-19")];
-
-  it("names the specific missing-Friday date, not the whole week", () => {
-    const days = estimateVacationPayDays("2026-08-03", "2026-08-09", worked, []);
-    expect(days.map((d) => d.date)).toEqual(["2026-08-07"]); // the Friday
-  });
-
-  it("excludes a date that's still on the roster", () => {
-    const stillRostered = [shift("2026-08-07", false, "planned")];
-    const days = estimateVacationPayDays("2026-08-03", "2026-08-09", worked, stillRostered);
-    expect(days).toEqual([]);
-  });
-
-  it("a swapped-out date on the Friday still counts as paid vacation", () => {
-    const swappedOut = [shift("2026-08-07", false, "swapped-out")];
-    const days = estimateVacationPayDays("2026-08-03", "2026-08-09", worked, swappedOut);
-    expect(days.map((d) => d.date)).toEqual(["2026-08-07"]);
-  });
-
-  it("doesn't flag every weekday that individually clears 50% — caps at the real weekly average", () => {
-    // Mon/Tue/Wed each worked exactly half their occurrences (p = 0.5 apiece) —
-    // an independent per-day >=50% cutoff would flag all 3; the true combined
-    // expectation is 1.5 => rounds to 2, so only the top 2 (tie-broken by date)
-    // should come back.
-    const mixed = [
-      shift("2026-06-01"), // Mon
-      shift("2026-06-08"), // Mon
-      shift("2026-06-09"), // Tue
-      shift("2026-06-16"), // Tue
-      shift("2026-06-17"), // Wed
-      shift("2026-06-24"), // Wed
-    ];
-    const days = estimateVacationPayDays("2026-06-29", "2026-07-01", mixed, []); // Mon, Tue, Wed
-    expect(days.map((d) => d.date)).toEqual(["2026-06-29", "2026-06-30"]); // Mon + Tue, not Wed
-  });
-});
-
 describe("sick days in the roster math", () => {
   // Being ill doesn't make you a less-scheduled employee: the day still counts
   // as one you were rostered for, so it must not shrink the vacation budget.
@@ -258,15 +165,65 @@ describe("sick days in the roster math", () => {
     expect(buildWeekdayProfile(noisy)[1].p).toBe(0); // Mondays never rostered-and-paid
   });
 
-  it("prices vacation days off WORKED days only — a sick day's hours were never stood", () => {
-    const rates: GrossRate[] = [{ effectiveFrom: "2026-01-01", rate: 15 }];
-    // A short sick day (2h) among 6h worked days must not drag the daily average down.
-    const withShortSick = [
-      ...fridays,
-      { ...shift("2026-06-26", false, "sick"), actualHours: 2 },
-    ];
-    expect(avgGrossPerWorkedDay(withShortSick, rates, "2026-06-30")).toBeCloseTo(
-      avgGrossPerWorkedDay(fridays, rates, "2026-06-30"),
-    );
+});
+
+describe("vacation days are erased from the roster observation window", () => {
+  // He works Thu/Fri/Sat every week. A two-week gap for a holiday must not read as
+  // "he wasn't scheduled those Thursdays" and shrink the entitlement he's owed.
+  const weeks = ["2026-07-02", "2026-07-09", "2026-07-16", "2026-08-13", "2026-08-20"];
+  const history: Shift[] = weeks.flatMap((thu) => [
+    shift(thu),
+    shift(addDays(thu, 1)),
+    shift(addDays(thu, 2)),
+  ]);
+  // Away 20 Jul – 9 Aug — the whole range leaves the window, not just the days
+  // payroll charged: he was unavailable on the uncharged Sundays too.
+  const away = vacationCalendarDates([
+    { from: "2026-07-20", to: "2026-08-09", werktage: 0, scheduledCost: 0, createdAt: "now" },
+  ]);
+
+  // UTC arithmetic on purpose: a local-midnight Date + toISOString() rolls back a
+  // day east of Greenwich, which silently collapsed this fixture's weeks.
+  function addDays(iso: string, n: number): string {
+    const d = new Date(iso + "T00:00Z");
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  }
+
+  it("under-counts days/week when the holiday is left in the window", () => {
+    expect(avgWorkingDaysPerWeek(history)).toBeLessThan(2.6);
+  });
+
+  it("recovers the true ~3 days/week once the holiday is excluded", () => {
+    expect(avgWorkingDaysPerWeek(history, away)).toBeGreaterThan(2.9);
+    expect(avgWorkingDaysPerWeek(history, away)).toBeLessThan(3.6);
+  });
+
+  it("keeps the Thursday roster probability at ~1 instead of diluting it", () => {
+    const diluted = buildWeekdayProfile(history)[4].p;
+    const honest = buildWeekdayProfile(history, away)[4].p;
+    expect(honest).toBeGreaterThan(diluted);
+    expect(honest).toBeCloseTo(1, 1);
+  });
+
+  it("leaves history untouched when no vacation is passed", () => {
+    expect(buildWeekdayProfile(history, new Set())).toEqual(buildWeekdayProfile(history));
   });
 });
+
+describe("calcVacation — payroll basis", () => {
+  it("reports the real August deduction alongside the other bases", () => {
+    const calc = calcVacation("2026-08-03", "2026-08-11", []);
+    expect(calc.payrollDays).toBe(6); // what the payslip charged
+    expect(calc.werktage).toBe(8); // contract Mon–Sat
+    expect(calc.arbeitstage).toBe(7); // Mon–Fri
+    expect(calc.calendarDays).toBe(9);
+    expect(calc.payrollDates).toHaveLength(6);
+  });
+
+  it("honours a custom chargeable-weekday rule", () => {
+    const calc = calcVacation("2026-08-03", "2026-08-11", [], { chargeableWeekdays: [1, 2, 3, 4, 5] });
+    expect(calc.payrollDays).toBe(7);
+  });
+});
+

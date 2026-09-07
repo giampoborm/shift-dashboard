@@ -533,6 +533,19 @@ tr.dim td { text-decoration: line-through; }
 .modal .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
 .modal .checkbox-row { flex-direction: row; align-items: center; gap: 0.4rem; }
 .modal .checkbox-row input[type="checkbox"] { width: auto; }
+
+/* Weekday picker for the payroll vacation rule (Settings > General). */
+.weekday-set {
+  display: flex; flex-wrap: wrap; gap: 0.1rem 0.9rem;
+  border: 1.5px solid var(--border); border-radius: 6px;
+  margin: 0.6rem 0 0; padding: 0.4rem 0.7rem 0.6rem;
+}
+.weekday-set legend { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0 0.3rem; }
+.weekday-set .checkbox-row {
+  display: flex; flex-direction: row; align-items: center; gap: 0.35rem;
+  font-size: 0.85rem; margin: 0;
+}
+.weekday-set .checkbox-row input[type="checkbox"] { width: auto; margin: 0; }
 .modal .hint { font-size: 0.78rem; line-height: 1.35; margin: 0 0 0.5rem; }
 .modal .err { color: var(--bad); font-size: 0.8rem; margin: 0 0 0.5rem; }
 .modal-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.5rem; }
@@ -766,3 +779,20 @@ button.linklike:hover { background: none; color: var(--text); }
 .drift-delta.down { color: var(--bad); }
 .drift-delta.up { color: #16a34a; }
 .drift-note { font-size: 0.68rem; font-weight: 600; color: var(--muted); text-align: right; min-width: 3.2rem; }
+
+/* Fitted-rule read-out in Settings: the evidence state, not a hand-written note. */
+.settings .rule-fit {
+  border-left: 3px solid var(--accent);
+  padding: 0.5rem 0.6rem;
+  margin: 0.4rem 0 0.7rem;
+  background: var(--panel-2);
+  border-radius: 0 4px 4px 0;
+}
+.settings .rule-fit.err { border-left-color: var(--bad); color: inherit; }
+.settings .rule-fit .row-actions { margin-top: 0.4rem; }
+
+/* Stale-counting-rule warning inside the payslip-check popup. */
+.recon-note.warn {
+  border-left: 3px solid var(--warn);
+  padding-left: 0.55rem;
+}

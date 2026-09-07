@@ -1,13 +1,19 @@
 // Vacation calculator.
 //
-// Two views, because the user's contract (§8) states 24 Werktage but is "proportional
-// to actual schedule" and the user is unsure how a day is spent:
+// THREE views of the same time off, because the contract, payroll, and reality each
+// count it differently:
 //
+//  0. Payroll (what HR actually deducts) — the headline, because it is the only one
+//     that is auditable: chargeable weekdays in the range, paid a flat 6 h each,
+//     against a 20-day entitlement. Reverse-engineered from a real payslip; lives in
+//     vacationPayroll.ts, which documents the evidence.
 //  1. Werktage (legal/contract count) — deterministic: Mon–Sat in the range, minus
 //     Berlin public holidays. This is what's deducted from the 24-day budget.
 //  2. Schedule-based cost — a RANGE: how many working-days the vacation actually costs
 //     given the user's typical roster, estimated from historical weekday frequency.
 //     A midnight-crossing night shift counts as 2 working days.
+//
+// They are units, not rivals: never mix consumption from one with the budget of another.
 //
 // The pure functions take plain inputs; berlinHolidays() wraps the date-holidays dep.
 // Holidays-independent math (roster profile, proportional cost, pay estimate) lives in
@@ -18,8 +24,10 @@ import Holidays from "date-holidays";
 import { eachDayOfInterval, format, getDay, parseISO } from "date-fns";
 import type { Shift } from "./types";
 import { avgWorkingDaysPerWeek, buildWeekdayProfile, estimateScheduledCost } from "./vacationPay";
+import { chargeableVacationDates, DEFAULT_CHARGEABLE_WEEKDAYS } from "./vacationPayroll";
 
 export * from "./vacationPay";
+export * from "./vacationPayroll";
 
 export interface Holiday {
   date: string; // ISO yyyy-MM-dd
@@ -66,6 +74,8 @@ export function countWerktage(
 
 export interface VacationCalc {
   calendarDays: number;
+  payrollDays: number; // payroll-basis cost vs the 20-day entitlement — the real deduction
+  payrollDates: string[]; // the specific days charged
   werktage: number; // Werktage-basis cost vs the 24 budget
   arbeitstage: number; // Mon–Fri minus holidays
   holidays: Holiday[];
@@ -73,19 +83,36 @@ export interface VacationCalc {
   daysPerWeek: number; // avg working-days/week from history
 }
 
+export interface VacationCalcOptions {
+  /** Weekdays payroll charges (getDay numbering). Defaults to Tue–Sat. */
+  chargeableWeekdays?: number[];
+  /** Days already spent on vacation — removed from the roster observation window
+   *  so past time off can't shrink the proportional entitlement. */
+  vacationDates?: Set<string>;
+}
+
 /** One-shot calculation for a date range. `history` is the full shift list —
  *  the roster-profile helpers pick out the rostered days (worked + sick). */
-export function calcVacation(fromIso: string, toIso: string, history: Shift[]): VacationCalc {
+export function calcVacation(
+  fromIso: string,
+  toIso: string,
+  history: Shift[],
+  opts: VacationCalcOptions = {},
+): VacationCalc {
+  const { chargeableWeekdays = DEFAULT_CHARGEABLE_WEEKDAYS, vacationDates } = opts;
   const holidays = berlinHolidays(fromIso, toIso);
   const holidaySet = new Set(holidays.map((h) => h.date));
   const calendarDays =
     toIso < fromIso ? 0 : eachDayOfInterval({ start: parseISO(fromIso), end: parseISO(toIso) }).length;
+  const payrollDates = chargeableVacationDates(fromIso, toIso, chargeableWeekdays);
   return {
     calendarDays,
+    payrollDays: payrollDates.length,
+    payrollDates,
     werktage: countWerktage(fromIso, toIso, holidaySet, true),
     arbeitstage: countWerktage(fromIso, toIso, holidaySet, false),
     holidays,
-    scheduleCost: estimateScheduledCost(fromIso, toIso, buildWeekdayProfile(history)),
-    daysPerWeek: avgWorkingDaysPerWeek(history),
+    scheduleCost: estimateScheduledCost(fromIso, toIso, buildWeekdayProfile(history, vacationDates)),
+    daysPerWeek: avgWorkingDaysPerWeek(history, vacationDates),
   };
 }

@@ -18,19 +18,26 @@ import {
   validateRate,
   validateSettings,
 } from "../lib/settingsStore";
-import type { GrossRate, Payslip, Settings as SettingsT } from "../lib/types";
+import type { GrossRate, Payslip, Settings as SettingsT, Vacation } from "../lib/types";
+import { describeFit, fitChargeRules, impliedPerWeek } from "../lib/vacationRuleFit";
 import { SyncPanel } from "./SyncPanel";
 
 export function Settings(props: {
   settings: SettingsT;
   rates: GrossRate[];
   payslips: Payslip[];
+  vacations: Vacation[];
   onSettingsSaved: (s: SettingsT) => void;
   onDataReplaced: () => void;
 }) {
   return (
     <div className="settings">
-      <GeneralSection settings={props.settings} onSaved={props.onSettingsSaved} />
+      <GeneralSection
+        settings={props.settings}
+        payslips={props.payslips}
+        vacations={props.vacations}
+        onSaved={props.onSettingsSaved}
+      />
       <RatesSection rates={props.rates} />
       <PayslipsSection payslips={props.payslips} />
       <SyncPanel onDataReplaced={props.onDataReplaced} />
@@ -49,13 +56,21 @@ function Feedback(props: { errors: string[]; saved: boolean }) {
   return null;
 }
 
-function GeneralSection(props: { settings: SettingsT; onSaved: (s: SettingsT) => void }) {
+function GeneralSection(props: {
+  settings: SettingsT;
+  payslips: Payslip[];
+  vacations: Vacation[];
+  onSaved: (s: SettingsT) => void;
+}) {
   const s = props.settings;
   const [userName, setUserName] = useState(s.userName);
   const [tipPct, setTipPct] = useState(String(Math.round(s.tipPoolRate * 1000) / 10)); // % form
   const [closingTime, setClosingTime] = useState(s.closingTime);
   const [werktage, setWerktage] = useState(String(s.vacationWerktage));
   const [halfLife, setHalfLife] = useState(String(s.recencyHalfLifeDays));
+  const [payrollDays, setPayrollDays] = useState(String(s.vacationPayrollDays));
+  const [dayHours, setDayHours] = useState(String(s.vacationDayHours));
+  const [chargeable, setChargeable] = useState<number[]>(s.vacationChargeableWeekdays);
   const [errors, setErrors] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
 
@@ -64,6 +79,8 @@ function GeneralSection(props: { settings: SettingsT; onSaved: (s: SettingsT) =>
     const pct = parseNum(tipPct);
     const wt = parseNum(werktage);
     const hl = parseNum(halfLife);
+    const pd = parseNum(payrollDays);
+    const dh = parseNum(dayHours);
     const next: SettingsT = {
       ...s,
       userName: userName.trim(),
@@ -71,6 +88,9 @@ function GeneralSection(props: { settings: SettingsT; onSaved: (s: SettingsT) =>
       closingTime: closingTime,
       vacationWerktage: wt == null ? NaN : wt,
       recencyHalfLifeDays: hl == null ? NaN : hl,
+      vacationPayrollDays: pd == null ? NaN : pd,
+      vacationDayHours: dh == null ? NaN : dh,
+      vacationChargeableWeekdays: [...chargeable].sort((a, b) => a - b),
     };
     const errs = validateSettings(next);
     setErrors(errs);
@@ -84,7 +104,7 @@ function GeneralSection(props: { settings: SettingsT; onSaved: (s: SettingsT) =>
   return (
     <section>
       <h3>General</h3>
-      <p className="hint">Identity, the tip-pool cut, the closing time used when a slot says “Ende”, the annual vacation entitlement, and how fast old tips fade from estimates.</p>
+      <p className="hint">Identity, the tip-pool cut, the closing time used when a slot says “Ende”, the contract’s vacation entitlement, and how fast old tips fade from estimates.</p>
       <div className="grid">
         <label>Name (in plan files)
           <input value={userName} onChange={(e) => setUserName(e.target.value)} />
@@ -102,11 +122,108 @@ function GeneralSection(props: { settings: SettingsT; onSaved: (s: SettingsT) =>
           <input value={halfLife} onChange={(e) => setHalfLife(e.target.value)} inputMode="numeric" placeholder="45" title="Lower = recent shifts dominate tip estimates. 0 = weight all history equally." />
         </label>
       </div>
+
+      <h4 style={{ margin: "1rem 0 0.2rem" }}>Payroll vacation rule</h4>
+      <p className="hint">
+        How your employer actually counts and pays a day off. Rather than being assumed, this is
+        <strong> fitted to your payslips</strong>: each slip’s “Genommene Urlaubstage” is checked
+        against the vacation you recorded, and only the counting rules that reproduce every slip
+        survive. Add those figures to a payslip below and the rule pins itself down.
+      </p>
+      <RuleFitNote
+        settings={s}
+        payslips={props.payslips}
+        vacations={props.vacations}
+        onApply={(rule, hours) => {
+          setChargeable(rule);
+          if (hours != null) setDayHours(String(hours));
+        }}
+      />
+      <div className="grid">
+        <label>Entitlement (days / year)
+          <input value={payrollDays} onChange={(e) => setPayrollDays(e.target.value)} inputMode="decimal" placeholder="20" title={'The payslip’s “Tage LJ alt”.'} />
+        </label>
+        <label>Hours paid per vacation day
+          <input value={dayHours} onChange={(e) => setDayHours(e.target.value)} inputMode="decimal" placeholder="6" title={'The payslip’s Urlaub hours ÷ Genommene Urlaubstage.'} />
+        </label>
+      </div>
+      <fieldset className="weekday-set">
+        <legend>Weekdays charged</legend>
+        {WEEKDAY_LABELS.map((label, wd) => (
+          <label key={wd} className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={chargeable.includes(wd)}
+              onChange={(e) =>
+                setChargeable((prev) =>
+                  e.target.checked ? [...prev, wd] : prev.filter((d) => d !== wd),
+                )
+              }
+            />
+            {label}
+          </label>
+        ))}
+      </fieldset>
+
       <div className="row-actions" style={{ marginTop: "0.75rem" }}>
         <button className="primary" onClick={save}>Save general</button>
       </div>
       <Feedback errors={errors} saved={saved} />
     </section>
+  );
+}
+
+// getDay() order, so the index IS the weekday number stored in settings.
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * Live read-out of the counting rule fitted to the payslips, with a one-click apply
+ * when the evidence has settled on a single rule that isn't the one saved.
+ *
+ * This replaces a paragraph of hand-written prose that had to be edited by a human
+ * every time the evidence moved. Now the evidence speaks for itself.
+ */
+function RuleFitNote(props: {
+  settings: SettingsT;
+  payslips: Payslip[];
+  vacations: Vacation[];
+  onApply: (weekdays: number[], dayHours: number | null) => void;
+}) {
+  const perWeek = impliedPerWeek(props.settings);
+  const fit = fitChargeRules(props.payslips, props.vacations, { perWeek });
+  const current = [...props.settings.vacationChargeableWeekdays].sort((a, b) => a - b).join(",");
+  const fitted = fit.resolved
+    ? [...fit.rules[0].weekdays].sort((a, b) => a - b).join(",")
+    : null;
+  const differs = fitted != null && fitted !== current;
+  const hoursDiffer =
+    fit.dayHours != null && Math.abs(fit.dayHours - props.settings.vacationDayHours) > 0.01;
+
+  return (
+    <div className={`hint rule-fit${fit.conflict ? " err" : ""}`}>
+      <strong>{fit.conflict ? "⚠ " : fit.resolved ? "✓ " : "? "}</strong>
+      {describeFit(fit)}
+      {perWeek != null && !fit.conflict && (
+        <>
+          {" "}
+          Your {props.settings.vacationPayrollDays}-day entitlement over{" "}
+          {props.settings.vacationWerktage / 6} weeks implies {perWeek} charged days a week, which
+          narrows the candidates.
+        </>
+      )}
+      {fit.dayHoursConflict && (
+        <> Your payslips disagree about hours per vacation day — check the figures entered.</>
+      )}
+      {(differs || hoursDiffer) && (
+        <div className="row-actions" style={{ marginTop: "0.4rem" }}>
+          <button onClick={() => props.onApply(fit.rules[0]?.weekdays ?? [], fit.dayHours)}>
+            Apply fitted rule
+            {differs ? ` (${fit.rules[0].label})` : ""}
+            {hoursDiffer ? ` @ ${fit.dayHours} h/day` : ""}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -186,6 +303,8 @@ function PayslipsSection(props: { payslips: Payslip[] }) {
   const [gross, setGross] = useState("");
   const [hours, setHours] = useState("");
   const [net, setNet] = useState("");
+  const [vacDays, setVacDays] = useState("");
+  const [vacHours, setVacHours] = useState("");
   const [errors, setErrors] = useState<string[]>([]);
 
   async function add() {
@@ -194,12 +313,14 @@ function PayslipsSection(props: { payslips: Payslip[] }) {
       totalGross: parseNum(gross) ?? NaN,
       totalHours: parseNum(hours) ?? NaN,
       totalNet: parseNum(net) ?? NaN,
+      vacationDays: parseNum(vacDays) ?? undefined,
+      vacationHours: parseNum(vacHours) ?? undefined,
     };
     const errs = validatePayslip(rec);
     setErrors(errs);
     if (errs.length) return;
     await db.payslips.add(rec as Payslip);
-    setMonth(""); setGross(""); setHours(""); setNet("");
+    setMonth(""); setGross(""); setHours(""); setNet(""); setVacDays(""); setVacHours("");
   }
 
   return (
@@ -219,6 +340,8 @@ function PayslipsSection(props: { payslips: Payslip[] }) {
         <input value={gross} onChange={(e) => setGross(e.target.value)} inputMode="decimal" placeholder="gross €" />
         <input value={hours} onChange={(e) => setHours(e.target.value)} inputMode="decimal" placeholder="hours" />
         <input value={net} onChange={(e) => setNet(e.target.value)} inputMode="decimal" placeholder="net €" />
+        <input value={vacDays} onChange={(e) => setVacDays(e.target.value)} inputMode="decimal" placeholder="Urlaubstage" title={'The slip’s “Genommene Urlaubstage” (Lohnart 620). Leave blank if the slip has no vacation line.'} />
+        <input value={vacHours} onChange={(e) => setVacHours(e.target.value)} inputMode="decimal" placeholder="Urlaub h" title={'The slip’s “Urlaub” hours (Lohnart 171).'} />
         <button onClick={add}>+ Add payslip</button>
       </div>
       <Feedback errors={errors} saved={false} />
@@ -231,6 +354,8 @@ function PayslipRow(props: { slip: Payslip }) {
   const [gross, setGross] = useState(String(props.slip.totalGross));
   const [hours, setHours] = useState(String(props.slip.totalHours));
   const [net, setNet] = useState(String(props.slip.totalNet));
+  const [vacDays, setVacDays] = useState(props.slip.vacationDays?.toString() ?? "");
+  const [vacHours, setVacHours] = useState(props.slip.vacationHours?.toString() ?? "");
   const [errors, setErrors] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
 
@@ -246,6 +371,9 @@ function PayslipRow(props: { slip: Payslip }) {
       totalGross: g ?? NaN,
       totalHours: parseNum(hours) ?? NaN,
       totalNet: n ?? NaN,
+      // Blank clears the figure back to "no vacation evidence" rather than to zero.
+      vacationDays: parseNum(vacDays) ?? undefined,
+      vacationHours: parseNum(vacHours) ?? undefined,
     };
     const errs = validatePayslip(rec);
     setErrors(errs);
@@ -263,6 +391,8 @@ function PayslipRow(props: { slip: Payslip }) {
       <input value={gross} onChange={(e) => { setGross(e.target.value); touched(); }} inputMode="decimal" />
       <input value={hours} onChange={(e) => { setHours(e.target.value); touched(); }} inputMode="decimal" />
       <input value={net} onChange={(e) => { setNet(e.target.value); touched(); }} inputMode="decimal" />
+      <input value={vacDays} onChange={(e) => { setVacDays(e.target.value); touched(); }} inputMode="decimal" placeholder="–" title={'Genommene Urlaubstage (Lohnart 620). Blank = this slip carries no vacation evidence.'} />
+      <input value={vacHours} onChange={(e) => { setVacHours(e.target.value); touched(); }} inputMode="decimal" placeholder="–" title={'Urlaub hours (Lohnart 171).'} />
       <span className="muted unit">{factor != null ? `${(factor * 100).toFixed(1)}%` : "—"}</span>
       <button onClick={save}>Save</button>
       <button className="danger" onClick={remove}>Delete</button>
