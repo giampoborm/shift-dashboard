@@ -324,3 +324,66 @@ describe("describeFit", () => {
     for (const f of fits) expect(describeFit(f)).not.toMatch(JARGON);
   });
 });
+
+describe("planned vacations — the saved setting stands until evidence exists", () => {
+  const TUE_SAT = [2, 3, 4, 5, 6];
+  const noEvidence: Payslip[] = [
+    { month: "2026-08", totalGross: 1000, totalHours: 60, totalNet: 800 },
+  ];
+
+  it("does not manufacture uncertainty from an absence of payslips", () => {
+    // Without this, a fresh install quotes a mid-week range as "5-7 days" across
+    // Mon-Fri / Tue-Sat / Wed-Sun, contradicting the rule the user actually set.
+    const fit = fitChargeRules(noEvidence, [], { perWeek: 5, current: TUE_SAT });
+    expect(labels(fit.rules)).toEqual(["Tue–Sat"]);
+    expect(predictChargedDays("2026-10-05", "2026-10-13", fit.rules)).toEqual({
+      min: 6,
+      max: 6,
+      agree: true,
+    });
+  });
+
+  it("still says plainly that nothing has confirmed it", () => {
+    const fit = fitChargeRules(noEvidence, [], { perWeek: 5, current: TUE_SAT });
+    expect(fit.resolved).toBe(false); // a setting, not a finding
+    expect(fit.observations).toBe(0);
+    expect(describeFit(fit)).toBe("Not checked against a payslip yet.");
+  });
+
+  it("falls back to the full space when the saved set isn't a recognisable rule", () => {
+    const fit = fitChargeRules(noEvidence, [], { perWeek: 5, current: [1, 3, 5] });
+    expect(fit.rules.length).toBeGreaterThan(1);
+  });
+
+  it("widens only for REAL ambiguity — evidence several rules explain", () => {
+    const slip: Payslip = {
+      month: "2026-08",
+      totalGross: 0,
+      totalHours: 0,
+      totalNet: 0,
+      vacationDays: 6,
+    };
+    const fit = fitChargeRules([slip], [AUG], { current: TUE_SAT }); // no perWeek pruning
+    expect(labels(fit.rules)).toEqual(["Mon–Thu", "Tue–Sat"]);
+    // Mon 5 - Sat 10 Oct: Mon-Thu charges Mon5..Thu8 = 4, Tue-Sat charges Tue6..Sat10 = 5.
+    expect(predictChargedDays("2026-10-05", "2026-10-10", fit.rules)).toEqual({
+      min: 4,
+      max: 5,
+      agree: false,
+    });
+  });
+
+  it("lets evidence overrule the saved setting rather than deferring to it", () => {
+    // Saved Tue-Sat, but the slip only fits Mon-Fri (7 days over 3-11 Aug).
+    const slip: Payslip = {
+      month: "2026-08",
+      totalGross: 0,
+      totalHours: 0,
+      totalNet: 0,
+      vacationDays: 7,
+    };
+    const fit = fitChargeRules([slip], [AUG], { perWeek: 5, current: TUE_SAT });
+    expect(labels(fit.rules)).toEqual(["Mon–Fri"]);
+    expect(fit.resolved).toBe(true);
+  });
+});

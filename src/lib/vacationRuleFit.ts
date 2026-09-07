@@ -158,12 +158,34 @@ function fitDayHours(observations: VacationObservation[]): {
 export function fitChargeRules(
   payslips: Payslip[],
   vacations: Vacation[],
-  opts: { perWeek?: number } = {},
+  opts: { perWeek?: number; current?: number[] } = {},
 ): RuleFit {
   const observations = observationsFrom(payslips);
   const space = opts.perWeek
     ? CANDIDATE_RULES.filter((r) => r.perWeek === opts.perWeek)
     : CANDIDATE_RULES;
+
+  // With NO evidence, the saved setting stands alone rather than the whole space.
+  //
+  // This matters for planned vacations. The fit's job is to CHECK the rule the user
+  // has set, not to replace it with maximal ignorance until a payslip arrives —
+  // otherwise a brand-new install would quote "5–7 days" for a mid-week range it
+  // should simply cost at the setting, with "not checked yet" as the honest caveat.
+  // Widening is reserved for real ambiguity: evidence that several rules explain.
+  if (observations.length === 0) {
+    const saved = opts.current ? ruleForWeekdays(opts.current) : undefined;
+    if (saved) {
+      return {
+        rules: [saved],
+        resolved: false, // a setting, not a confirmed finding
+        conflict: false,
+        observations: 0,
+        perWeek: opts.perWeek,
+        dayHours: null,
+        dayHoursConflict: false,
+      };
+    }
+  }
 
   const survivors = space.filter((rule) =>
     observations.every(

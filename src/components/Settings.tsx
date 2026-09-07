@@ -189,7 +189,10 @@ function RuleFitNote(props: {
   onApply: (weekdays: number[], dayHours: number | null) => void;
 }) {
   const perWeek = impliedPerWeek(props.settings);
-  const fit = fitChargeRules(props.payslips, props.vacations, { perWeek });
+  const fit = fitChargeRules(props.payslips, props.vacations, {
+    perWeek,
+    current: props.settings.vacationChargeableWeekdays,
+  });
   const current = [...props.settings.vacationChargeableWeekdays].sort((a, b) => a - b).join(",");
   const fitted = fit.resolved
     ? [...fit.rules[0].weekdays].sort((a, b) => a - b).join(",")

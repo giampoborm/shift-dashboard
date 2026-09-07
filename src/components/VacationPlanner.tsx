@@ -84,13 +84,34 @@ export function VacationPlanner(props: {
   // rule still standing. When they agree the app can speak plainly; when they don't,
   // the spread is shown rather than a confident number picked arbitrarily.
   const fit = useMemo(
-    () => fitChargeRules(payslips, vacations, { perWeek: impliedPerWeek(settings) }),
+    () =>
+      fitChargeRules(payslips, vacations, {
+        perWeek: impliedPerWeek(settings),
+        current: settings.vacationChargeableWeekdays,
+      }),
     [payslips, vacations, settings],
   );
   const predicted = useMemo(
     () => predictChargedDays(from, to, fit.rules),
     [from, to, fit],
   );
+
+  // Pay follows the days: if the surviving rules disagree about how many days this
+  // range costs, they disagree about what it pays too, and quoting one number while
+  // the card beside it shows a spread would be incoherent.
+  const payRange = useMemo(() => {
+    const nets = fit.rules.map(
+      (r) =>
+        vacationPayrollPay(
+          from,
+          to,
+          { ...settings, vacationChargeableWeekdays: r.weekdays },
+          rates,
+          payslips,
+        ).net,
+    );
+    return nets.length ? { min: Math.min(...nets), max: Math.max(...nets) } : { min: 0, max: 0 };
+  }, [from, to, fit, settings, rates, payslips]);
 
   const year = new Date().getFullYear();
   const thisYear = vacations.filter((v) => v.from.slice(0, 4) === String(year));
@@ -175,8 +196,16 @@ export function VacationPlanner(props: {
             />
             <Card
               label="Vacation pay"
-              value={`~€${Math.round(pay.net)}`}
-              sub={`${calc.payrollDays} × ${r1(pay.dayHours)} h = ${r1(pay.hours)} h net`}
+              value={
+                predicted.agree
+                  ? `~€${Math.round(pay.net)}`
+                  : `~€${Math.round(payRange.min)}–${Math.round(payRange.max)}`
+              }
+              sub={
+                predicted.agree
+                  ? `${calc.payrollDays} × ${r1(pay.dayHours)} h = ${r1(pay.hours)} h net`
+                  : `${predicted.min}–${predicted.max} days × ${r1(pay.dayHours)} h net`
+              }
             />
             <Card label="Calendar days" value={String(calc.calendarDays)} />
             <Card label="Werktage" value={String(calc.werktage)} sub={`vs your ${werktageBudget}`} />
