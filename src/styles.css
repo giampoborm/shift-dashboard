@@ -799,3 +799,7 @@ button.linklike:hover { background: none; color: var(--text); }
 .settings .rule-fit { display: flex; flex-direction: column; gap: 0.25rem; }
 .settings .rule-fit-head { color: var(--text); }
 .settings .rule-fit-body { color: var(--muted); }
+
+/* "5 in the week of 3 Aug + 1 in the week of 10 Aug" — the count, made checkable. */
+.week-split { font-size: 0.82rem; margin: 0.5rem 0 0; color: var(--text); }
+.week-split .plus { color: var(--muted); }

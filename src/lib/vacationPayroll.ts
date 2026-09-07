@@ -39,7 +39,7 @@
 //
 // Dep-free (no date-holidays) so App.tsx can use it outside the lazy boundary.
 
-import { eachDayOfInterval, format, getDay, parseISO } from "date-fns";
+import { eachDayOfInterval, format, getDay, parseISO, startOfWeek } from "date-fns";
 import type { GrossRate, Payslip, Settings, Vacation } from "./types";
 import { netFactorForMonth, rateForDate } from "./earnings";
 import { paidChargedDatesInMonth } from "./vacationBudget";
@@ -79,6 +79,36 @@ export function chargeableVacationDates(
   return eachDayOfInterval({ start: parseISO(fromIso), end: parseISO(toIso) })
     .filter((d) => set.has(getDay(d)))
     .map((d) => format(d, "yyyy-MM-dd"));
+}
+
+export interface ChargedWeek {
+  /** Monday of the week, ISO. */
+  weekStart: string;
+  /** Charged dates falling in it. */
+  dates: string[];
+}
+
+/**
+ * Charged days grouped by calendar week (Monday-start).
+ *
+ * "6 days" for 3–11 Aug is opaque; "5 in the week of 3 Aug + 1 in the week of 10
+ * Aug" is the same number with its mechanism visible, and matches how anyone
+ * actually thinks about a holiday — a full week away, plus a day. Showing the
+ * split is what makes the count checkable rather than something to be believed.
+ */
+export function chargedDaysByWeek(
+  fromIso: string,
+  toIso: string,
+  weekdays: number[] = DEFAULT_CHARGEABLE_WEEKDAYS,
+): ChargedWeek[] {
+  const byWeek = new Map<string, string[]>();
+  for (const date of chargeableVacationDates(fromIso, toIso, weekdays)) {
+    const monday = format(startOfWeek(parseISO(date), { weekStartsOn: 1 }), "yyyy-MM-dd");
+    byWeek.set(monday, [...(byWeek.get(monday) ?? []), date]);
+  }
+  return [...byWeek.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([weekStart, dates]) => ({ weekStart, dates }));
 }
 
 /** How many vacation days payroll deducts for [fromIso, toIso]. */

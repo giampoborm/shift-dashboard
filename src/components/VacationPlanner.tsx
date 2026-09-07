@@ -20,6 +20,7 @@ import {
   calcVacation,
   countChargeableVacationDays,
   describeChargeableWeekdays,
+  chargedDaysByWeek,
   payrollDaysTakenInYear,
   proportionalEntitlement,
   vacationCalendarDates,
@@ -32,7 +33,7 @@ import {
   predictChargedDays,
 } from "../lib/vacationRuleFit";
 import { vacationBudgetUse } from "../lib/vacationBudget";
-import { formatDate } from "../lib/format";
+import { formatDate, formatDateShort } from "../lib/format";
 import type { GrossRate, Payslip, Settings, Shift } from "../lib/types";
 
 function addDaysIso(iso: string, n: number): string {
@@ -124,6 +125,10 @@ export function VacationPlanner(props: {
 
   // Vacation pay is quoted for the covered days only.
   const paidShare = budget.charged > 0 ? budget.paid / budget.charged : 0;
+
+  // The count broken into weeks: "6" means nothing on its own, "5 in the week of
+  // 3 Aug + 1 in the week of 10 Aug" is checkable at a glance.
+  const weeks = useMemo(() => chargedDaysByWeek(from, to, chargeable), [from, to, chargeable]);
 
   const year = new Date().getFullYear();
   const thisYear = vacations.filter((v) => v.from.slice(0, 4) === String(year));
@@ -241,6 +246,23 @@ export function VacationPlanner(props: {
             )}{" "}
             A midnight-crossing shift counts as one vacation day.
           </p>
+          {weeks.length > 0 && (
+            <p className="week-split">
+              {weeks.map((w, i) => (
+                <span key={w.weekStart}>
+                  {i > 0 && <span className="plus"> + </span>}
+                  <strong>{w.dates.length}</strong> in the week of {formatDateShort(w.weekStart)}
+                </span>
+              ))}
+              {weeks.length > 1 && (
+                <span className="muted">
+                  {"  = "}
+                  {weeks.reduce((n, w) => n + w.dates.length, 0)} days
+                </span>
+              )}
+            </p>
+          )}
+
           {budget.unpaid > 0 && (
             <p className="err" style={{ fontSize: "0.82rem" }}>
               <strong>

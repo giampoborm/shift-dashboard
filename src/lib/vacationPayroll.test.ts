@@ -9,6 +9,7 @@ import { describe, it, expect } from "vitest";
 import {
   chargeableVacationDates,
   chargedDatesInMonth,
+  chargedDaysByWeek,
   countChargeableVacationDays,
   DEFAULT_CHARGEABLE_WEEKDAYS,
   DEFAULT_VACATION_DAY_HOURS,
@@ -409,5 +410,42 @@ describe("vacationPayForMonth — unpaid leave beyond the entitlement", () => {
     const r = vacationPayForMonth("2026-08", [SPENT, AUG], SETTINGS, RATES, slips, "2026-08-31");
     expect(r.observed).toBe(true);
     expect(r.days).toBe(6);
+  });
+});
+
+describe("chargedDaysByWeek — showing why 6 is 6", () => {
+  it("splits the real August range into a full week plus one day", () => {
+    // This is the breakdown the number is meaningless without: away across two
+    // weeks, the second of which is a single day.
+    const weeks = chargedDaysByWeek("2026-08-03", "2026-08-11");
+    expect(weeks).toHaveLength(2);
+    expect(weeks[0]).toEqual({
+      weekStart: "2026-08-03",
+      dates: ["2026-08-04", "2026-08-05", "2026-08-06", "2026-08-07", "2026-08-08"],
+    });
+    expect(weeks[1]).toEqual({ weekStart: "2026-08-10", dates: ["2026-08-11"] });
+  });
+
+  it("charges one full week for Mon-to-Mon, not two", () => {
+    // Going away Mon 3 through Mon 10 costs 5, because Sunday and Monday are free.
+    const weeks = chargedDaysByWeek("2026-08-03", "2026-08-10");
+    expect(weeks).toHaveLength(1);
+    expect(weeks[0].dates).toHaveLength(5);
+  });
+
+  it("gives 5 + 5 for two whole weeks", () => {
+    const weeks = chargedDaysByWeek("2026-08-03", "2026-08-16");
+    expect(weeks.map((w) => w.dates.length)).toEqual([5, 5]);
+  });
+
+  it("groups by Monday even when the range starts mid-week", () => {
+    // Thu 6 - Tue 11: Thu/Fri/Sat in the first week, Tue in the next.
+    const weeks = chargedDaysByWeek("2026-08-06", "2026-08-11");
+    expect(weeks.map((w) => w.dates.length)).toEqual([3, 1]);
+    expect(weeks[0].weekStart).toBe("2026-08-03");
+  });
+
+  it("is empty for a range with no chargeable days", () => {
+    expect(chargedDaysByWeek("2026-08-09", "2026-08-10")).toEqual([]); // Sun + Mon
   });
 });
