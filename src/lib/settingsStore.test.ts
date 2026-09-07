@@ -18,7 +18,6 @@ const GOOD_SETTINGS: Settings = {
   vacationWerktage: 24,
   vacationPayrollDays: 20,
   vacationDayHours: 6,
-  vacationChargeableWeekdays: [2, 3, 4, 5, 6],
   recencyHalfLifeDays: 45,
 };
 
@@ -30,11 +29,6 @@ describe("validateSettings — payroll vacation rule", () => {
   it("rejects a non-positive entitlement or day length", () => {
     expect(validateSettings({ ...GOOD_SETTINGS, vacationPayrollDays: 0 })).toHaveLength(1);
     expect(validateSettings({ ...GOOD_SETTINGS, vacationDayHours: -6 })).toHaveLength(1);
-  });
-
-  it("rejects an empty or out-of-range weekday set", () => {
-    expect(validateSettings({ ...GOOD_SETTINGS, vacationChargeableWeekdays: [] })).toHaveLength(1);
-    expect(validateSettings({ ...GOOD_SETTINGS, vacationChargeableWeekdays: [7] })).toHaveLength(1);
   });
 });
 

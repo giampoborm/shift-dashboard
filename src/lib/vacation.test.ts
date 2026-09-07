@@ -6,7 +6,6 @@ import {
   calcVacation,
   countWerktage,
   estimateScheduledCost,
-  proportionalEntitlement,
   vacationCalendarDates,
 } from "./vacation";
 import type { Shift } from "./types";
@@ -109,16 +108,13 @@ describe("buildWeekdayProfile + estimateScheduledCost", () => {
   });
 });
 
-describe("proportional basis", () => {
-  it("derives avg working-days/week and converts the 24 budget", () => {
+describe("roster frequency", () => {
+  it("derives avg working-days/week", () => {
     // 3 Fridays across a 15-day span (~2.14 weeks) => ~1.4 days/week
     const worked = [shift("2026-06-05"), shift("2026-06-12"), shift("2026-06-19")];
     const dpw = avgWorkingDaysPerWeek(worked);
     expect(dpw).toBeGreaterThan(1.3);
     expect(dpw).toBeLessThan(1.5);
-    // 4 days/week should convert 24 Werktage -> 16 actual working-days
-    expect(proportionalEntitlement(24, 4)).toBeCloseTo(16);
-    expect(proportionalEntitlement(24, 6)).toBeCloseTo(24);
   });
 
   it("meeting shifts don't inflate the average working-days/week", () => {
@@ -135,7 +131,7 @@ describe("proportional basis", () => {
 describe("calcVacation", () => {
   it("produces a coherent summary", () => {
     const worked = [shift("2026-06-05"), shift("2026-06-12"), shift("2026-06-19")];
-    const c = calcVacation("2026-06-22", "2026-06-28", worked);
+    const c = calcVacation("2026-06-22", "2026-06-28", worked, { dayHours: 6 });
     expect(c.calendarDays).toBe(7);
     expect(c.werktage).toBe(6);
     expect(c.arbeitstage).toBe(5);
@@ -212,18 +208,44 @@ describe("vacation days are erased from the roster observation window", () => {
 });
 
 describe("calcVacation — payroll basis", () => {
-  it("reports the real August deduction alongside the other bases", () => {
-    const calc = calcVacation("2026-08-03", "2026-08-11", []);
-    expect(calc.payrollDays).toBe(6); // what the payslip charged
-    expect(calc.werktage).toBe(8); // contract Mon–Sat
-    expect(calc.arbeitstage).toBe(7); // Mon–Fri
+  // 4 shifts of 7 h a week (Tue/Wed/Fri/Sat) = 28 h/week — the user's real shape.
+  const weeks = ["2026-06-02", "2026-06-09", "2026-06-16", "2026-06-23", "2026-06-30"];
+  const history: Shift[] = weeks.flatMap((tue) => [
+    hoursShift(tue, 7), // Tue
+    hoursShift(addDaysUtc(tue, 1), 7), // Wed
+    hoursShift(addDaysUtc(tue, 3), 7), // Fri
+    hoursShift(addDaysUtc(tue, 4), 7), // Sat
+  ]);
+
+  function hoursShift(date: string, hours: number): Shift {
+    return { ...shift(date), actualHours: hours };
+  }
+  function addDaysUtc(iso: string, n: number): string {
+    const d = new Date(iso + "T00:00Z");
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  }
+
+  it("reproduces the August payslip: 3–11 Aug = 6 days = 36 h", () => {
+    const calc = calcVacation("2026-08-03", "2026-08-11", history, { dayHours: 6 });
+    expect(calc.weeklyHours).toBeCloseTo(28, 5);
+    // A full week (28 h) plus the trailing Mon (0 h) and Tue (7 h) = 35 h. Note the
+    // per-weekday weighting: a flat 28 x 9/7 would say 36. The extra Monday is free
+    // because he is never rostered then — which is the whole point of charging by
+    // hours rather than by calendar weekdays.
+    expect(calc.charge.missedHours).toBeCloseTo(35, 5);
+    expect(calc.charge.rawDays).toBeCloseTo(35 / 6, 5); // 5.83
+    expect(calc.charge.days).toBe(6); // rounded up, as the manager does
+    expect(calc.charge.paidHours).toBeCloseTo(36, 5); // 6 x 6 — the slip's Urlaub STD
+    // The other basis is unchanged — same weeks, different unit.
+    expect(calc.werktage).toBe(8);
+    expect(calc.arbeitstage).toBe(7);
     expect(calc.calendarDays).toBe(9);
-    expect(calc.payrollDates).toHaveLength(6);
   });
 
-  it("honours a custom chargeable-weekday rule", () => {
-    const calc = calcVacation("2026-08-03", "2026-08-11", [], { chargeableWeekdays: [1, 2, 3, 4, 5] });
-    expect(calc.payrollDays).toBe(7);
+  it("costs more days than shifts missed, because a 7 h shift > a 6 h vacation day", () => {
+    const calc = calcVacation("2026-08-03", "2026-08-09", history, { dayHours: 6 });
+    expect(calc.scheduleCost.expected).toBeCloseTo(4, 5); // 4 shifts in the week
+    expect(calc.charge.days).toBe(5); // but 28 h / 6 = 4.67 -> 5 days charged
   });
 });
-

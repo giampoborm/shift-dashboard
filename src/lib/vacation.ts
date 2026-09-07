@@ -1,32 +1,44 @@
 // Vacation calculator.
 //
-// THREE views of the same time off, because the contract, payroll, and reality each
-// count it differently:
+// TWO views of the same time off, because payroll and the contract count it in
+// different units:
 //
-//  0. Payroll (what HR actually deducts) — the headline, because it is the only one
-//     that is auditable: chargeable weekdays in the range, paid a flat 6 h each,
-//     against a 20-day entitlement. Reverse-engineered from a real payslip; lives in
-//     vacationPayroll.ts, which documents the evidence.
+//  0. Payroll (what HR actually deducts) — the headline, and the only one that is
+//     auditable against a payslip: the HOURS you'd have worked in the range ÷ the
+//     flat 6 h a vacation day is paid at, rounded up, against a 20-day
+//     entitlement. That is why four ~7 h shifts a week cost ~4.7 days, not 4.
+//     The mechanism and its evidence live in vacationCharge.ts; the pricing in
+//     vacationPayroll.ts.
 //  1. Werktage (legal/contract count) — deterministic: Mon–Sat in the range, minus
-//     Berlin public holidays. This is what's deducted from the 24-day budget.
-//  2. Schedule-based cost — a RANGE: how many working-days the vacation actually costs
-//     given the user's typical roster, estimated from historical weekday frequency.
-//     A midnight-crossing night shift counts as 2 working days.
+//     Berlin public holidays, against the 24 of contract §8. Paperwork, not pay.
 //
-// They are units, not rivals: never mix consumption from one with the budget of another.
+// They are units, not rivals: never mix consumption from one with the budget of
+// the other.
 //
-// The pure functions take plain inputs; berlinHolidays() wraps the date-holidays dep.
-// Holidays-independent math (roster profile, proportional cost, pay estimate) lives in
-// vacationPay.ts, kept dep-free so App.tsx can use it without pulling date-holidays out
-// from behind VacationPlanner's lazy-load boundary. Re-exported here for convenience.
+// Alongside them, "shifts you'd miss" is reported as a RANGE — not a budget, an
+// opportunity cost: the tips of those shifts are simply gone, and no payslip line
+// replaces them.
+//
+// The pure functions take plain inputs; berlinHolidays() wraps the date-holidays
+// dep. Everything holidays-independent lives in vacationPay.ts (roster side) and
+// vacationCharge.ts / vacationPayroll.ts (payroll side), kept dep-free so App.tsx
+// can use them without pulling date-holidays out from behind VacationPlanner's
+// lazy-load boundary. Re-exported here for convenience.
 
 import Holidays from "date-holidays";
 import { eachDayOfInterval, format, getDay, parseISO } from "date-fns";
 import type { Shift } from "./types";
-import { avgWorkingDaysPerWeek, buildWeekdayProfile, estimateScheduledCost } from "./vacationPay";
-import { chargeableVacationDates, DEFAULT_CHARGEABLE_WEEKDAYS } from "./vacationPayroll";
+import {
+  avgWeeklyHours,
+  avgWorkingDaysPerWeek,
+  buildWeekdayHoursProfile,
+  buildWeekdayProfile,
+  estimateScheduledCost,
+} from "./vacationPay";
+import { chargeVacation } from "./vacationCharge";
 
 export * from "./vacationPay";
+export * from "./vacationCharge";
 export * from "./vacationPayroll";
 
 export interface Holiday {
@@ -74,20 +86,22 @@ export function countWerktage(
 
 export interface VacationCalc {
   calendarDays: number;
-  payrollDays: number; // payroll-basis cost vs the 20-day entitlement — the real deduction
-  payrollDates: string[]; // the specific days charged
+  /** Payroll-basis cost vs the 20-day entitlement — the real deduction. */
+  charge: ReturnType<typeof chargeVacation>;
   werktage: number; // Werktage-basis cost vs the 24 budget
   arbeitstage: number; // Mon–Fri minus holidays
   holidays: Holiday[];
-  scheduleCost: ReturnType<typeof estimateScheduledCost>; // proportional-basis cost (scheduled shifts)
+  /** Shifts you'd miss — lost tips, not a budget. */
+  scheduleCost: ReturnType<typeof estimateScheduledCost>;
   daysPerWeek: number; // avg working-days/week from history
+  weeklyHours: number; // avg rostered hours/week — the input to the payroll charge
 }
 
 export interface VacationCalcOptions {
-  /** Weekdays payroll charges (getDay numbering). Defaults to Tue–Sat. */
-  chargeableWeekdays?: number[];
+  /** Flat hours one vacation day is paid at. */
+  dayHours: number;
   /** Days already spent on vacation — removed from the roster observation window
-   *  so past time off can't shrink the proportional entitlement. */
+   *  so past time off can't shrink the estimate of a typical week. */
   vacationDates?: Set<string>;
 }
 
@@ -97,22 +111,24 @@ export function calcVacation(
   fromIso: string,
   toIso: string,
   history: Shift[],
-  opts: VacationCalcOptions = {},
+  opts: VacationCalcOptions,
 ): VacationCalc {
-  const { chargeableWeekdays = DEFAULT_CHARGEABLE_WEEKDAYS, vacationDates } = opts;
+  const { dayHours, vacationDates } = opts;
   const holidays = berlinHolidays(fromIso, toIso);
   const holidaySet = new Set(holidays.map((h) => h.date));
   const calendarDays =
-    toIso < fromIso ? 0 : eachDayOfInterval({ start: parseISO(fromIso), end: parseISO(toIso) }).length;
-  const payrollDates = chargeableVacationDates(fromIso, toIso, chargeableWeekdays);
+    toIso < fromIso
+      ? 0
+      : eachDayOfInterval({ start: parseISO(fromIso), end: parseISO(toIso) }).length;
+  const hoursProfile = buildWeekdayHoursProfile(history, vacationDates);
   return {
     calendarDays,
-    payrollDays: payrollDates.length,
-    payrollDates,
+    charge: chargeVacation(fromIso, toIso, hoursProfile, dayHours),
     werktage: countWerktage(fromIso, toIso, holidaySet, true),
     arbeitstage: countWerktage(fromIso, toIso, holidaySet, false),
     holidays,
     scheduleCost: estimateScheduledCost(fromIso, toIso, buildWeekdayProfile(history, vacationDates)),
     daysPerWeek: avgWorkingDaysPerWeek(history, vacationDates),
+    weeklyHours: avgWeeklyHours(hoursProfile),
   };
 }

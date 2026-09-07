@@ -1,38 +1,35 @@
-// Vacation planner. Shows THREE accountings of the same time off — same weeks,
-// different units, never to be mixed:
-//  0. Payroll basis (the headline, and the only auditable one): chargeable weekdays
-//     in the range vs a 20-day entitlement, paid a flat 6 h each. Reverse-engineered
-//     from the 8/2026 payslip — see lib/vacationPayroll.ts for the evidence AND for
-//     what that evidence does not settle (which five weekdays).
-//  1. Werktage basis (contract paperwork): Mon–Sat minus Berlin public holidays, vs 24.
-//  2. Proportional basis (your roster): budget = 24 × your avg days/week ÷ 6 (~16),
-//     cost = estimated scheduled shifts in the range. A night shift = 1 day.
+// Vacation planner.
 //
-// Scope note: this is a CALCULATOR and a LOG, not an optimizer. It answers "what will
-// this range cost and pay me" and "what have I already spent". Advice about placing a
-// vacation well needs the chargeable-weekday rule confirmed by payroll first — until
-// then it would be confident guessing. See lib/vacation.ts for the model.
+// The headline is the PAYROLL cost, and it is worked out the way payroll actually
+// works it out: the hours you'd have been rostered for during the range, divided
+// by the flat 6 h a vacation day is paid at, rounded up. Because his shifts run
+// ~7 h, a week away costs ~4.7 days rather than 4 — which is the whole reason a
+// Mon-to-next-Tuesday trip shows up on the slip as 6 days / 36 h. See
+// lib/vacationCharge.ts for the mechanism and the payslip it's grounded in.
+//
+// Beside it, the Werktage basis (Mon–Sat minus Berlin public holidays, vs the 24
+// of contract §8) is kept as the paperwork cross-check — same ~4 weeks, different
+// unit, never to be mixed with the payroll balance.
+//
+// "Shifts you'd miss" is deliberately NOT a third budget: it's opportunity cost.
+// Those shifts' tips are gone and no payslip line replaces them.
+//
+// Scope note: this is a CALCULATOR and a LOG, not an optimizer.
 
 import { useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { db } from "../lib/db";
 import {
+  buildWeekdayHoursProfile,
   calcVacation,
-  countChargeableVacationDays,
-  describeChargeableWeekdays,
-  chargedDaysByWeek,
+  calibrateCharge,
+  chargeVacation,
+  describeCalibration,
   payrollDaysTakenInYear,
-  proportionalEntitlement,
+  vacationBudgetUse,
   vacationCalendarDates,
   vacationPayrollPay,
 } from "../lib/vacation";
-import {
-  describeFit,
-  fitChargeRules,
-  impliedPerWeek,
-  predictChargedDays,
-} from "../lib/vacationRuleFit";
-import { vacationBudgetUse } from "../lib/vacationBudget";
 import { formatDate, formatDateShort } from "../lib/format";
 import type { GrossRate, Payslip, Settings, Shift } from "../lib/types";
 
@@ -44,6 +41,8 @@ function addDaysIso(iso: string, n: number): string {
 const r1 = (n: number) => Math.round(n * 10) / 10;
 const rng = (a: number, b: number) =>
   Math.round(a) === Math.round(b) ? `${Math.round(a)}` : `${Math.round(a)}–${Math.round(b)}`;
+const monthLabel = (m: string) =>
+  new Date(`${m}-01T00:00`).toLocaleDateString(undefined, { month: "long" });
 
 export function VacationPlanner(props: {
   /** Full shift list — the vacation math picks out rostered days (worked + sick) itself. */
@@ -59,87 +58,59 @@ export function VacationPlanner(props: {
   const [note, setNote] = useState("");
 
   const vacations = useLiveQuery(() => db.vacations.orderBy("from").toArray(), []) ?? [];
-  const chargeable = settings.vacationChargeableWeekdays;
+  const dayHours = settings.vacationDayHours;
 
-  // Every day already spent on vacation — erased from the roster observation window
-  // so past time off can't read as "he isn't scheduled much" and shrink the
-  // proportional entitlement. The whole range, not just the charged days: you were
-  // away on the uncharged Sundays too.
+  // Every day already spent on vacation — erased from the roster observation
+  // window so past time off can't read as "he works fewer hours" and shrink what
+  // the next holiday is estimated to cost.
   const pastVacationDates = useMemo(() => vacationCalendarDates(vacations), [vacations]);
 
+  const hoursProfile = useMemo(
+    () => buildWeekdayHoursProfile(allShifts, pastVacationDates),
+    [allShifts, pastVacationDates],
+  );
+
   const calc = useMemo(
-    () =>
-      calcVacation(from, to, allShifts, {
-        chargeableWeekdays: chargeable,
-        vacationDates: pastVacationDates,
-      }),
-    [from, to, allShifts, chargeable, pastVacationDates],
+    () => calcVacation(from, to, allShifts, { dayHours, vacationDates: pastVacationDates }),
+    [from, to, allShifts, dayHours, pastVacationDates],
   );
+  const charge = calc.charge;
 
-  // What payroll will actually pay for this range — arithmetic, not a guess.
   const pay = useMemo(
-    () => vacationPayrollPay(from, to, settings, rates, payslips),
-    [from, to, settings, rates, payslips],
+    () => vacationPayrollPay(from, to, hoursProfile, settings, rates, payslips),
+    [from, to, hoursProfile, settings, rates, payslips],
   );
 
-  // The counting rule fitted to the payslips, and what THIS range costs under every
-  // rule still standing. When they agree the app can speak plainly; when they don't,
-  // the spread is shown rather than a confident number picked arbitrarily.
-  const fit = useMemo(
-    () =>
-      fitChargeRules(payslips, vacations, {
-        perWeek: impliedPerWeek(settings),
-        current: settings.vacationChargeableWeekdays,
-      }),
-    [payslips, vacations, settings],
-  );
-  const predicted = useMemo(
-    () => predictChargedDays(from, to, fit.rules),
-    [from, to, fit],
-  );
-
-  // Pay follows the days: if the surviving rules disagree about how many days this
-  // range costs, they disagree about what it pays too, and quoting one number while
-  // the card beside it shows a spread would be incoherent.
-  const payRange = useMemo(() => {
-    const nets = fit.rules.map(
-      (r) =>
-        vacationPayrollPay(
-          from,
-          to,
-          { ...settings, vacationChargeableWeekdays: r.weekdays },
-          rates,
-          payslips,
-        ).net,
-    );
-    return nets.length ? { min: Math.min(...nets), max: Math.max(...nets) } : { min: 0, max: 0 };
-  }, [from, to, fit, settings, rates, payslips]);
-
-  // How much of the finite entitlement this range actually uses. Days beyond the
-  // year's budget are still time off, but payroll pays nothing for them — so they
-  // must not be quoted as vacation pay. The slip's own "Tage verfuegbar" is this.
+  // How much of the finite entitlement this range uses. Days beyond the year's
+  // budget are still time off, but payroll pays nothing for them.
   const budget = useMemo(
-    () => vacationBudgetUse(from, to, vacations, settings.vacationPayrollDays, chargeable),
-    [from, to, vacations, settings.vacationPayrollDays, chargeable],
+    () =>
+      vacationBudgetUse(
+        from,
+        to,
+        vacations,
+        hoursProfile,
+        dayHours,
+        settings.vacationPayrollDays,
+      ),
+    [from, to, vacations, hoursProfile, dayHours, settings.vacationPayrollDays],
   );
-
-  // Vacation pay is quoted for the covered days only.
   const paidShare = budget.charged > 0 ? budget.paid / budget.charged : 0;
 
-  // The count broken into weeks: "6" means nothing on its own, "5 in the week of
-  // 3 Aug + 1 in the week of 10 Aug" is checkable at a glance.
-  const weeks = useMemo(() => chargedDaysByWeek(from, to, chargeable), [from, to, chargeable]);
+  // Does hours ÷ 6 reproduce what the payslips actually charged?
+  const cal = useMemo(
+    () => calibrateCharge(payslips, vacations, hoursProfile, dayHours),
+    [payslips, vacations, hoursProfile, dayHours],
+  );
 
   const year = new Date().getFullYear();
   const thisYear = vacations.filter((v) => v.from.slice(0, 4) === String(year));
   const takenWerktage = thisYear.reduce((s, v) => s + v.werktage, 0);
-  const takenScheduled = thisYear.reduce((s, v) => s + (v.scheduledCost ?? 0), 0);
-  const takenPayroll = payrollDaysTakenInYear(vacations, year, chargeable, today);
+  const takenPayroll = payrollDaysTakenInYear(vacations, year, hoursProfile, dayHours, today);
 
   const werktageBudget = settings.vacationWerktage;
-  const propBudget = proportionalEntitlement(werktageBudget, calc.daysPerWeek);
-
   const valid = to >= from;
+  const noHistory = calc.weeklyHours <= 0;
 
   async function saveVacation() {
     if (!valid) return;
@@ -148,7 +119,8 @@ export function VacationPlanner(props: {
       to,
       werktage: calc.werktage,
       scheduledCost: r1(calc.scheduleCost.expected),
-      payrollDays: calc.payrollDays,
+      payrollDays: charge.days,
+      payrollHours: charge.paidHours,
       note: note.trim() || undefined,
       createdAt: new Date().toISOString(),
     });
@@ -162,14 +134,8 @@ export function VacationPlanner(props: {
           title="Payroll basis (what HR deducts)"
           taken={takenPayroll}
           budget={settings.vacationPayrollDays}
-          unit={`days (${describeChargeableWeekdays(chargeable)})`}
+          unit={`days · your hours ÷ ${r1(dayHours)} h`}
           highlight
-        />
-        <Budget
-          title="Proportional basis (your shifts)"
-          taken={r1(takenScheduled)}
-          budget={Math.round(propBudget)}
-          unit={`shifts · ~${r1(calc.daysPerWeek)} days/week`}
         />
         <Budget
           title="Werktage basis (contract §8)"
@@ -179,9 +145,9 @@ export function VacationPlanner(props: {
         />
       </div>
       <p className="muted" style={{ fontSize: "0.78rem" }}>
-        All three describe the same ~4 weeks off — just different units, so never mix
-        consumption from one with the budget of another. The payroll basis is the one
-        your payslip shows (“Genommene Urlaubstage”), so it's the balance that's real.
+        Both describe the same ~4 weeks off, in different units — never mix consumption from
+        one with the budget of the other. The payroll basis is the one your payslip shows
+        (“Genommene Urlaubstage”), so it's the balance that's real.
       </p>
 
       <div className="vac-inputs">
@@ -193,73 +159,85 @@ export function VacationPlanner(props: {
 
       {!valid ? (
         <p className="err">End date is before start date.</p>
+      ) : noHistory ? (
+        <p className="err">
+          No rostered hours logged yet, so there's nothing to work the vacation cost out
+          from. Import or log some shifts first.
+        </p>
       ) : (
         <>
           <div className="cards">
             <Card
               label="Days charged"
-              value={predicted.agree ? String(calc.payrollDays) : `${predicted.min}–${predicted.max}`}
-              sub={
-                predicted.agree
-                  ? `${budget.availableBefore} left before this · ${budget.availableAfter} after`
-                  : `of your ${settings.vacationPayrollDays} · depends on the counting rule`
-              }
+              value={String(charge.days)}
+              sub={`${r1(charge.rawDays)} rounded up · ${budget.availableBefore} left before, ${budget.availableAfter} after`}
               accent
+            />
+            <Card
+              label="Hours you'd miss"
+              value={`${r1(charge.missedHours)} h`}
+              sub={`~${r1(calc.weeklyHours)} h in a typical week`}
+            />
+            <Card
+              label="Vacation pay"
+              value={`~€${Math.round(pay.net * paidShare)}`}
+              sub={
+                budget.unpaid > 0
+                  ? `only ${budget.paid} of ${budget.charged} days still covered`
+                  : `${charge.days} × ${r1(dayHours)} h = ${r1(charge.paidHours)} h net`
+              }
             />
             <Card
               label="Shifts you'd miss"
               value={rng(calc.scheduleCost.low, calc.scheduleCost.high)}
-              sub={`≈ ${r1(calc.scheduleCost.expected)} from your roster`}
-            />
-            <Card
-              label="Vacation pay"
-              value={
-                predicted.agree
-                  ? `~€${Math.round(pay.net * paidShare)}`
-                  : `~€${Math.round(payRange.min * paidShare)}–${Math.round(payRange.max * paidShare)}`
-              }
-              sub={
-                budget.unpaid > 0
-                  ? `only ${budget.paid} of ${budget.charged} days still covered`
-                  : predicted.agree
-                    ? `${calc.payrollDays} × ${r1(pay.dayHours)} h = ${r1(pay.hours)} h net`
-                    : `${predicted.min}–${predicted.max} days × ${r1(pay.dayHours)} h net`
-              }
+              sub={`≈ ${r1(calc.scheduleCost.expected)} from your roster · their tips are gone`}
             />
             <Card label="Calendar days" value={String(calc.calendarDays)} />
             <Card label="Werktage" value={String(calc.werktage)} sub={`vs your ${werktageBudget}`} />
-            <Card label="Arbeitstage" value={String(calc.arbeitstage)} sub="Mon–Fri basis" />
           </div>
 
-          <p className="muted" style={{ fontSize: "0.8rem" }}>
-            Payroll charges <strong>{describeChargeableWeekdays(chargeable)}</strong> off your{" "}
-            {settings.vacationPayrollDays} and pays each one a flat{" "}
-            <strong>{r1(settings.vacationDayHours)} h</strong> — not your real shift length.{" "}
-            {describeFit(fit)}
-            {!predicted.agree && (
-              <>
-                {" "}
-                That is why this range shows a spread: depending on which is right it costs{" "}
-                {predicted.min} or {predicted.max} days. Add another payslip’s vacation figures in
-                Settings to settle it.
-              </>
-            )}{" "}
-            A midnight-crossing shift counts as one vacation day.
+          {/* The derivation, spelled out — "6 days" means nothing on its own. */}
+          <p className="week-split">
+            <strong>{r1(charge.missedHours)} h</strong> you'd have worked
+            <span className="plus"> ÷ </span>
+            <strong>{r1(dayHours)} h</strong> a vacation day
+            <span className="plus"> = </span>
+            <strong>{r1(charge.rawDays)}</strong>
+            <span className="plus"> → </span>
+            <strong>{charge.days}</strong> day{charge.days === 1 ? "" : "s"} charged
           </p>
-          {weeks.length > 0 && (
+          {charge.segments.length > 1 && (
             <p className="week-split">
-              {weeks.map((w, i) => (
-                <span key={w.weekStart}>
+              {charge.segments.map((s, i) => (
+                <span key={s.month}>
                   {i > 0 && <span className="plus"> + </span>}
-                  <strong>{w.dates.length}</strong> in the week of {formatDateShort(w.weekStart)}
+                  <strong>{s.days}</strong> in {monthLabel(s.month)} ({r1(s.missedHours)} h)
                 </span>
               ))}
-              {weeks.length > 1 && (
-                <span className="muted">
-                  {"  = "}
-                  {weeks.reduce((n, w) => n + w.dates.length, 0)} days
-                </span>
-              )}
+              <span className="muted">
+                {"  — each month's payslip rounds up on its own"}
+              </span>
+            </p>
+          )}
+
+          <p className="muted" style={{ fontSize: "0.8rem" }}>
+            Payroll doesn't count the days you're away — it counts the <strong>hours you'd
+            have worked</strong> and pays them out in flat <strong>{r1(dayHours)} h</strong>{" "}
+            days, rounding any part-day up. That's why your ~{r1(calc.weeklyHours)} h week
+            costs about {r1(calc.weeklyHours / dayHours)} vacation days rather than the{" "}
+            {r1(calc.daysPerWeek)} shifts you actually work: a {r1(calc.weeklyHours / Math.max(1, calc.daysPerWeek))} h
+            shift is longer than one {r1(dayHours)} h vacation day. Which weekdays you're
+            available on makes no difference to the total — only how many hours you'd have
+            worked does. {describeCalibration(cal)}
+          </p>
+
+          {cal.impliedWeeklyHours != null && (
+            <p className="muted" style={{ fontSize: "0.78rem" }}>
+              Cross-check: your payslips' vacation hours imply payroll costed you at{" "}
+              <strong>~{r1(cal.impliedWeeklyHours)} h/week</strong>; your logged roster
+              averages <strong>~{r1(cal.weeklyHours)} h/week</strong>.
+              {Math.abs(cal.impliedWeeklyHours - cal.weeklyHours) > 2 &&
+                " That gap is big enough to shift a day either way on a long range."}
             </p>
           )}
 
@@ -269,7 +247,7 @@ export function VacationPlanner(props: {
                 {budget.unpaid} of these {budget.charged} days would be unpaid leave.
               </strong>{" "}
               You have {budget.availableBefore} day{budget.availableBefore === 1 ? "" : "s"} left of
-              this year’s {settings.vacationPayrollDays}, so payroll pays{" "}
+              this year's {settings.vacationPayrollDays}, so payroll pays{" "}
               {budget.paid === 0 ? "none of this range" : `only the first ${budget.paid}`}. The rest
               is still time off — it just earns nothing, and the vacation pay above reflects that.
             </p>
@@ -281,7 +259,8 @@ export function VacationPlanner(props: {
 
           {calc.holidays.length > 0 && (
             <p className="muted" style={{ fontSize: "0.8rem" }}>
-              Public holidays in range (free under the Werktage basis, still charged by payroll):{" "}
+              Public holidays in range (free under the Werktage basis; under the payroll basis
+              they only help if you'd have been rostered then):{" "}
               {calc.holidays.map((h) => `${formatDate(h.date)} ${h.name}`).join(" · ")}
             </p>
           )}
@@ -294,28 +273,44 @@ export function VacationPlanner(props: {
             <thead>
               <tr>
                 <th className="l">From</th><th className="l">To</th>
-                <th>Charged</th><th>Shifts</th><th>Werktage</th><th className="l">Note</th><th></th>
+                <th>Charged</th><th>Hours</th><th>Shifts</th><th>Werktage</th>
+                <th className="l">Note</th><th></th>
               </tr>
             </thead>
             <tbody>
-              {vacations.map((v) => (
-                <tr key={v.id}>
-                  <td className="l">{formatDate(v.from)}</td>
-                  <td className="l">{formatDate(v.to)}</td>
-                  <td>{v.payrollDays ?? countChargeableVacationDays(v.from, v.to, chargeable)}</td>
-                  <td>{r1(v.scheduledCost ?? 0)}</td>
-                  <td>{v.werktage}</td>
-                  <td className="l muted">{v.note ?? ""}</td>
-                  <td>
-                    <button className="danger" onClick={() => v.id != null && db.vacations.delete(v.id)}>
-                      ✕
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {vacations.map((v) => {
+                const c =
+                  v.payrollDays != null
+                    ? { days: v.payrollDays, paidHours: v.payrollHours ?? v.payrollDays * dayHours }
+                    : chargeVacation(v.from, v.to, hoursProfile, dayHours);
+                return (
+                  <tr key={v.id}>
+                    <td className="l">{formatDate(v.from)}</td>
+                    <td className="l">{formatDate(v.to)}</td>
+                    <td>{c.days}</td>
+                    <td>{r1(c.paidHours)}</td>
+                    <td>{r1(v.scheduledCost ?? 0)}</td>
+                    <td>{v.werktage}</td>
+                    <td className="l muted">{v.note ?? ""}</td>
+                    <td>
+                      <button className="danger" onClick={() => v.id != null && db.vacations.delete(v.id)}>
+                        ✕
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
+      )}
+      {vacations.length > 0 && (
+        <p className="muted" style={{ fontSize: "0.78rem" }}>
+          Recorded vacations keep the day count they were saved with once they're over —
+          that's what payroll charged, and refining the estimate later shouldn't rewrite a
+          month you've already been paid for. Upcoming ones are re-estimated as your roster
+          changes. {formatDateShort(today)} is “today”.
+        </p>
       )}
     </div>
   );

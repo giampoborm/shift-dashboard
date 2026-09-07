@@ -30,7 +30,6 @@ const data = (shifts: Shift[]): SnapshotData => ({
       vacationWerktage: 24,
       vacationPayrollDays: 20,
       vacationDayHours: 6,
-      vacationChargeableWeekdays: [2, 3, 4, 5, 6],
       recencyHalfLifeDays: 45,
     },
   ],

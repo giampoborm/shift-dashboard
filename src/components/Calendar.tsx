@@ -14,10 +14,13 @@ import {
   startOfMonth,
   startOfWeek,
 } from "date-fns";
-import { computeShiftEarnings, isPaidShift, netFactorForMonth } from "../lib/earnings";
+import { computeShiftEarnings, isPaidShift } from "../lib/earnings";
 import { estimateShift } from "../lib/estimates";
-import { chargeableVacationDates } from "../lib/vacationPayroll";
-import { rateForDate } from "../lib/earnings";
+// Imported from the dep-free vacation modules, NOT the lib/vacation barrel: that
+// one pulls in date-holidays, which must stay behind VacationPlanner's lazy load.
+import { buildWeekdayHoursProfile } from "../lib/vacationPay";
+import { vacationCalendarDates, vacationCosts } from "../lib/vacationPayroll";
+import { formatDate } from "../lib/format";
 import type { GrossRate, Payslip, Settings, Shift, Vacation } from "../lib/types";
 
 const WEEK_HEADERS = ["M", "T", "W", "T", "F", "S", "S"];
@@ -68,21 +71,30 @@ export function Calendar(props: {
     return vacations?.find((v) => iso >= v.from && iso <= v.to);
   }
 
-  // Which specific dates within recorded vacations payroll CHARGES a vacation day
-  // for, and the net wage each one pays (a flat day at the rate in force then).
-  // Deterministic — the same arithmetic the payslip runs, so these figures can be
-  // checked against it rather than merely trusted. See lib/vacationPayroll.ts.
-  const paidVacationDays = useMemo(() => {
-    const map = new Map<string, number>(); // date -> net €
-    for (const v of vacations ?? []) {
-      for (const date of chargeableVacationDates(v.from, v.to, settings.vacationChargeableWeekdays)) {
-        const { factor } = netFactorForMonth(date.slice(0, 7), payslips);
-        const dayGross = settings.vacationDayHours * (rateForDate(date, rates) ?? 0);
-        map.set(date, dayGross * (factor ?? 1));
-      }
-    }
-    return map;
-  }, [vacations, settings, rates, payslips]);
+  // What each recorded vacation costs and pays, as ONE figure per vacation.
+  //
+  // Deliberately not per-day: payroll charges the hours you'd have worked ÷ a flat
+  // 6 h day, so there are no individual "charged dates" to colour in — the old
+  // per-day paid/free split was an artefact of the weekday rule this replaced, and
+  // it was what made ticking "Sunday" in Settings appear to conjure a paid day out
+  // of nowhere. Every day of a vacation now reads the same, with the range's real
+  // cost in the tooltip.
+  //
+  // Priced through the shared vacationCosts() rather than locally, so the tooltip
+  // quotes only entitlement-COVERED days — a hand-rolled loop here would promise
+  // money for unpaid leave and disagree with the month total. See lib/vacationPayroll.
+  const vacationCost = useMemo(
+    () =>
+      vacationCosts(
+        vacations ?? [],
+        buildWeekdayHoursProfile(shifts, vacationCalendarDates(vacations ?? [])),
+        settings,
+        rates,
+        payslips,
+        format(new Date(), "yyyy-MM-dd"),
+      ),
+    [shifts, vacations, settings, rates, payslips],
+  );
 
   // Per-day take-home and the tip slice of it (worked/sick actuals, else estimated
   // median). A sick day contributes its wage and no tips — computeShiftEarnings
@@ -125,7 +137,7 @@ export function Calendar(props: {
           const money = dayMoney(list);
           const out = !isSameMonth(d, cursor);
           const vac = vacationOn(iso);
-          const paidVacEur = paidVacationDays.get(iso);
+          const vacCost = vac?.id != null ? vacationCost.get(vac.id) : undefined;
           return (
             <div
               key={iso}
@@ -136,11 +148,14 @@ export function Calendar(props: {
               <div className="cal-daynum">{format(d, "d")}</div>
               {vac && (
                 <div
-                  className={`cal-vacation${paidVacEur != null ? " paid" : ""}`}
-                  title={vac.note ?? "vacation"}
+                  className="cal-vacation"
+                  title={
+                    vacCost
+                      ? `${formatDate(vac.from)} – ${formatDate(vac.to)}: ${vacCost.days} vacation days${vacCost.unpaidDays > 0 ? ` (${vacCost.unpaidDays} unpaid)` : ""}, ~€${Math.round(vacCost.net)} net${vac.note ? ` · ${vac.note}` : ""}`
+                      : (vac.note ?? "vacation")
+                  }
                 >
-                  {paidVacEur != null ? `vac. day · €${Math.round(paidVacEur)}` : "vacation (free)"}
-                  {vac.note ? ` · ${vac.note}` : ""}
+                  vacation{vac.note ? ` · ${vac.note}` : ""}
                 </div>
               )}
               {list.map((s) => (
@@ -167,7 +182,7 @@ export function Calendar(props: {
         })}
       </div>
       <p className="muted" style={{ fontSize: "0.76rem" }}>
-        Solid chip = worked · outlined = planned · struck = swapped · dashed amber = sick (paid, no tips). Day total = take-home (worked actuals, else estimated median); <em>tips</em> is the tip slice of it. Within a recorded vacation, "vac. day" is a day payroll charges against your balance and pays a flat {settings.vacationDayHours} h for; "vacation (free)" days cost you nothing and pay nothing.
+        Solid chip = worked · outlined = planned · struck = swapped · dashed amber = sick (paid, no tips). Day total = take-home (worked actuals, else estimated median); <em>tips</em> is the tip slice of it. A vacation is charged as a whole range — the hours you'd have worked ÷ a flat {settings.vacationDayHours} h day, rounded up — so no single day in it is "the charged one"; hover a vacation for what the range costs.
       </p>
     </div>
   );

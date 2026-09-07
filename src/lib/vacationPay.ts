@@ -4,11 +4,19 @@
 // React.lazy boundary can use it without pulling the heavy date-holidays dep into the
 // main bundle. See CLAUDE.md's "heavy deps get lazy-loaded" convention.
 //
-// The PAY side moved to vacationPayroll.ts once the 8/2026 payslip revealed the real
-// rule: a flat 6 h per chargeable weekday. The probabilistic estimators that used to
-// live here (estimateVacationPay / estimateVacationPayDays / avgGrossPerWorkedDay)
-// guessed at that number and are gone — don't reintroduce a second, softer answer
-// next to the deterministic one.
+// It serves two consumers with different questions:
+//   * "how many SHIFTS would I miss" — buildWeekdayProfile / estimateScheduledCost.
+//     Opportunity cost: those shifts' tips are gone and nothing replaces them.
+//   * "how many HOURS would I miss" — buildWeekdayHoursProfile / expectedHoursInRange.
+//     This is the input payroll charges against: hours ÷ the flat 6 h vacation day,
+//     rounded up. See lib/vacationCharge.ts.
+// Those are different numbers on purpose — a ~7 h shift is more than one 6 h
+// vacation day — and conflating them is the bug this module was reworked to fix.
+//
+// The PAY side lives in vacationPayroll.ts. The probabilistic pay estimators that
+// used to live here (estimateVacationPay / estimateVacationPayDays /
+// avgGrossPerWorkedDay) guessed at the flat day and are gone — don't reintroduce a
+// second, softer answer next to the deterministic one.
 
 import { eachDayOfInterval, format, getDay, parseISO } from "date-fns";
 import type { Shift } from "./types";
@@ -100,14 +108,6 @@ export function avgWorkingDaysPerWeek(history: Shift[], vacationDates?: Set<stri
   return new Set(dates).size / (spanDays / 7);
 }
 
-/**
- * Proportional (BAG) entitlement: convert the Werktage budget to the user's
- * actual working-day basis. 24 Werktage @ 6-day week → 24 × daysPerWeek / 6.
- */
-export function proportionalEntitlement(werktageBudget: number, daysPerWeek: number): number {
-  return (werktageBudget * daysPerWeek) / 6;
-}
-
 export interface ScheduleCost {
   expected: number; // expected scheduled shifts the vacation costs
   low: number; // expected − 1 sd (clamped at 0)
@@ -130,4 +130,86 @@ export function estimateScheduledCost(
   }
   const sd = Math.sqrt(variance);
   return { expected, low: Math.max(0, expected - sd), high: expected + sd };
+}
+
+// ---------------------------------------------------------------------------
+// HOURS side of the roster — the input the payroll charge is actually computed
+// from (see lib/vacationCharge.ts).
+//
+// The employer does not count your days off. It counts the HOURS you would have
+// worked and divides them by the flat 6 h a vacation day is paid at. That is why
+// four ~7 h shifts a week cost more than four vacation days: 28 h / 6 = 4.67.
+// ---------------------------------------------------------------------------
+
+/** Hours one rostered shift represents, falling back to the roster mean when the
+ *  shift has no logged hours (typical of a sick day, which is rostered all the
+ *  same). A shift with no hours at all would otherwise read as a free day. */
+function shiftHoursWithFallback(s: Shift, mean: number): number {
+  return s.actualHours != null && s.actualHours > 0 ? s.actualHours : mean;
+}
+
+export interface WeekdayHours {
+  /** Expected hours rostered on that weekday — Σ hours ÷ times the weekday occurred. */
+  hours: number;
+  /** Distinct dates observed on that weekday (sample size). */
+  n: number;
+}
+
+/**
+ * Per-weekday expected ROSTERED HOURS, from the same window and the same
+ * worked+sick definition as buildWeekdayProfile. Vacation dates are erased from
+ * both the numerator and the denominator, so a holiday can't read as "he works
+ * fewer hours" and quietly shrink what the next one costs.
+ *
+ * Per weekday rather than a flat weekly average because a range is rarely a whole
+ * number of weeks: a Sat–Sun break should cost his weekend hours, not 2/7ths of
+ * the week. Summed over a full week it is exactly the weekly average, so the two
+ * views never disagree.
+ */
+export function buildWeekdayHoursProfile(
+  history: Shift[],
+  vacationDates?: Set<string>,
+): WeekdayHours[] {
+  const blank: WeekdayHours[] = Array.from({ length: 7 }, () => ({ hours: 0, n: 0 }));
+  const ws = withoutDates(history.filter(wasRostered), vacationDates);
+  if (ws.length === 0) return blank;
+
+  const known = ws.map((s) => s.actualHours).filter((h): h is number => h != null && h > 0);
+  const mean = known.length > 0 ? known.reduce((a, b) => a + b, 0) / known.length : 0;
+
+  const dates = ws.map((s) => s.date).sort();
+  const minIso = dates[0];
+  const maxIso = dates[dates.length - 1];
+
+  for (let wd = 0; wd < 7; wd++) {
+    const onDay = ws.filter((s) => getDay(parseISO(s.date)) === wd);
+    const occ = countWeekdayOccurrences(minIso, maxIso, wd, vacationDates);
+    const total = onDay.reduce((sum, s) => sum + shiftHoursWithFallback(s, mean), 0);
+    blank[wd] = { hours: occ > 0 ? total / occ : 0, n: new Set(onDay.map((s) => s.date)).size };
+  }
+  return blank;
+}
+
+/** Expected hours in a typical week — the sum of the per-weekday expectations. */
+export function avgWeeklyHours(profile: WeekdayHours[]): number {
+  return profile.reduce((sum, d) => sum + d.hours, 0);
+}
+
+/** Total sample size behind an hours profile — how many rostered days it saw. */
+export function hoursProfileSample(profile: WeekdayHours[]): number {
+  return profile.reduce((sum, d) => sum + d.n, 0);
+}
+
+/** Hours you'd have been rostered for across [fromIso, toIso], inclusive. */
+export function expectedHoursInRange(
+  fromIso: string,
+  toIso: string,
+  profile: WeekdayHours[],
+): number {
+  if (!fromIso || !toIso || toIso < fromIso) return 0;
+  let hours = 0;
+  for (const d of eachDayOfInterval({ start: parseISO(fromIso), end: parseISO(toIso) })) {
+    hours += profile[getDay(d)].hours;
+  }
+  return hours;
 }

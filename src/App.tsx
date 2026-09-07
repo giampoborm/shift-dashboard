@@ -10,12 +10,8 @@ import { formatDate, formatDateShort } from "./lib/format";
 import { shiftsToCsv, downloadText } from "./lib/exportCsv";
 import { estimateShift, sumEstimates, type Range } from "./lib/estimates";
 import { nextShiftFrom, shiftsInMonth } from "./lib/period";
-import {
-  chargedDatesInMonth,
-  vacationCalendarDates,
-  vacationPayForMonth,
-} from "./lib/vacationPayroll";
-import { paidChargedDatesInMonth } from "./lib/vacationBudget";
+import { segmentsInMonth, vacationCalendarDates, vacationPayForMonth } from "./lib/vacationPayroll";
+import { buildWeekdayHoursProfile } from "./lib/vacationPay";
 import { reconcileMonth } from "./lib/reconcile";
 import { consumeAuthRedirect, isConfigured, sync, syncOnOpen } from "./lib/driveSync";
 import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
@@ -285,6 +281,7 @@ export function App() {
           rates={rates!}
           payslips={payslips!}
           vacations={vacations ?? []}
+          allShifts={allShifts}
           onSettingsSaved={setSettings}
           onDataReplaced={refreshSettings}
         />
@@ -354,20 +351,37 @@ function Home(props: {
 
   const todayIso = format(new Date(), "yyyy-MM-dd");
 
-  // Paid vacation landing in the viewed month. Deterministic payroll arithmetic
-  // (chargeable weekdays x a flat day), not a guess — see lib/vacationPayroll.ts.
+  // Roster hours per weekday — the input the payroll vacation charge is computed
+  // from (hours you'd have worked / the flat 6 h day). Days already spent on
+  // vacation are erased from the window so time off can't shrink the estimate of a
+  // typical week. See lib/vacationCharge.ts.
+  const hoursProfile = useMemo(
+    () => buildWeekdayHoursProfile(allShifts, vacationCalendarDates(vacations ?? [])),
+    [allShifts, vacations],
+  );
+
+  // Paid vacation landing in the viewed month.
   const vacationPay = useMemo(
-    () => vacationPayForMonth(format(cursor, "yyyy-MM"), vacations, settings, rates, payslips, todayIso),
-    [cursor, vacations, settings, rates, payslips, todayIso],
+    () =>
+      vacationPayForMonth(
+        format(cursor, "yyyy-MM"),
+        vacations ?? [],
+        hoursProfile,
+        settings,
+        rates,
+        payslips,
+        todayIso,
+      ),
+    [cursor, vacations, hoursProfile, settings, rates, payslips, todayIso],
   );
 
   // Logged-vs-payslip check for the viewed month; drives the "!" on the salary card.
   // Vacation hours go in: the slip pays them on its own line, so a month with time
   // off would otherwise always read as short by exactly those hours.
   //
-  // `expectedDays` is what the counting rule predicts, passed alongside so that a
-  // slip carrying its own figure can catch the rule drifting out of date — see
-  // lib/vacationRuleFit.ts.
+  // `expectedDays` is what the charge model predicts, passed alongside so a slip
+  // carrying its own figure can catch the model drifting out of date (your typical
+  // hours changing, say) — see lib/vacationCharge.ts.
   const recon = useMemo(
     () => {
       const m = format(cursor, "yyyy-MM");
@@ -376,11 +390,13 @@ function Home(props: {
         hours: vacationPay.hours,
         gross: vacationPay.banked.gross + vacationPay.projected.gross,
         observed: vacationPay.observed,
-        expectedDays: chargedDatesInMonth(m, vacations, settings.vacationChargeableWeekdays)
-          .length,
+        expectedDays: segmentsInMonth(m, vacations ?? [], hoursProfile, settings).reduce(
+          (n, s) => n + s.days,
+          0,
+        ),
       });
     },
-    [allShifts, cursor, rates, payslips, vacationPay, vacations, settings],
+    [allShifts, cursor, rates, payslips, vacationPay, vacations, hoursProfile, settings],
   );
 
   const month = useMemo(() => {
@@ -396,8 +412,8 @@ function Home(props: {
     // rise instead of time off. Drop them from the projection (the shift rows
     // themselves are left alone; this is a money question, not a data edit).
     //
-    // The whole vacation range is used, not just the charged weekdays: you're away
-    // on the uncharged Sunday too, so a shift rostered then isn't happening either.
+    // The whole vacation range, of course: you're away every day of it, so any
+    // shift rostered inside it isn't happening.
     const awayDates = vacationCalendarDates(vacations ?? []);
     const plannedAll = inMonth.filter((s) => s.status === "planned" || s.status === "swapped-in");
     const plannedM = plannedAll.filter((s) => !awayDates.has(s.date));
@@ -434,18 +450,7 @@ function Home(props: {
       plannedOnVacation,
       // Charged days the entitlement no longer covers: unpaid leave, so they earn
       // nothing and the month must not be read as if they did.
-      unpaidVacationDays:
-        chargedDatesInMonth(
-          format(cursor, "yyyy-MM"),
-          vacations ?? [],
-          settings.vacationChargeableWeekdays,
-        ).length -
-        paidChargedDatesInMonth(
-          format(cursor, "yyyy-MM"),
-          vacations ?? [],
-          settings.vacationPayrollDays,
-          settings.vacationChargeableWeekdays,
-        ).length,
+      unpaidVacationDays: vacationPay.unpaidDays,
       vacationDays: vacationPay.days,
       vacationNet: vacationPay.banked.net + vacationPay.projected.net,
       vacationHours: vacationPay.hours,
@@ -563,10 +568,10 @@ function Home(props: {
             <>
               {" · "}
               <strong>
-                {month.unpaidVacationDays} more day
-                {month.unpaidVacationDays > 1 ? "s" : ""} off unpaid
+                of which {month.unpaidVacationDays} unpaid
               </strong>{" "}
-              (past this year&rsquo;s entitlement)
+              (past this year&rsquo;s entitlement, so the pay above excludes{" "}
+              {month.unpaidVacationDays > 1 ? "them" : "it"})
             </>
           )}
         </p>

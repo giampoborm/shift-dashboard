@@ -534,18 +534,6 @@ tr.dim td { text-decoration: line-through; }
 .modal .checkbox-row { flex-direction: row; align-items: center; gap: 0.4rem; }
 .modal .checkbox-row input[type="checkbox"] { width: auto; }
 
-/* Weekday picker for the payroll vacation rule (Settings > General). */
-.weekday-set {
-  display: flex; flex-wrap: wrap; gap: 0.1rem 0.9rem;
-  border: 1.5px solid var(--border); border-radius: 6px;
-  margin: 0.6rem 0 0; padding: 0.4rem 0.7rem 0.6rem;
-}
-.weekday-set legend { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0 0.3rem; }
-.weekday-set .checkbox-row {
-  display: flex; flex-direction: row; align-items: center; gap: 0.35rem;
-  font-size: 0.85rem; margin: 0;
-}
-.weekday-set .checkbox-row input[type="checkbox"] { width: auto; margin: 0; }
 .modal .hint { font-size: 0.78rem; line-height: 1.35; margin: 0 0 0.5rem; }
 .modal .err { color: var(--bad); font-size: 0.8rem; margin: 0 0 0.5rem; }
 .modal-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; margin-top: 0.5rem; }
@@ -627,7 +615,6 @@ button.danger:hover { background: var(--bad); color: #fff; }
   text-overflow: ellipsis;
   margin-top: 2px;
 }
-.cal-vacation.paid { color: #047857; }
 
 @media (max-width: 560px) {
   .cal-cell { min-height: 66px; }

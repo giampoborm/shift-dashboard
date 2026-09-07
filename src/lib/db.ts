@@ -3,11 +3,7 @@
 
 import Dexie, { type Table } from "dexie";
 import type { GrossRate, Payslip, Settings, Shift, Vacation } from "./types";
-import {
-  DEFAULT_CHARGEABLE_WEEKDAYS,
-  DEFAULT_VACATION_DAY_HOURS,
-  DEFAULT_VACATION_PAYROLL_DAYS,
-} from "./vacationPayroll";
+import { DEFAULT_VACATION_DAY_HOURS, DEFAULT_VACATION_PAYROLL_DAYS } from "./vacationCharge";
 
 export const DEFAULT_SETTINGS: Settings = {
   id: 1,
@@ -15,15 +11,12 @@ export const DEFAULT_SETTINGS: Settings = {
   tipPoolRate: 0.05,
   closingTime: "01:00",
   vacationWerktage: 24, // contract §8
-  // Payroll basis, read off the 8/2026 payslip — see lib/vacationPayroll.ts. These
-  // are only the STARTING POINT: lib/vacationRuleFit.ts refits the weekday set and
-  // the day hours against every payslip that records its vacation figures, and
-  // Settings offers to apply what it finds.
+  // Payroll basis, read off the 8/2026 payslip — see lib/vacationCharge.ts. The
+  // day count itself isn't a setting: it's derived from your roster hours, and
+  // lib/vacationCharge.ts re-checks that derivation against every payslip that
+  // records its vacation figures.
   vacationPayrollDays: DEFAULT_VACATION_PAYROLL_DAYS, // "Tage LJ alt" = 20
   vacationDayHours: DEFAULT_VACATION_DAY_HOURS, // Urlaub 36,00 STD ÷ 6,00 Tage
-  // Tue–Sat: the only 5-day rule reproducing the slip's 6 days for 3–11 Aug, and
-  // confirmed by payroll (the range ended the 11th; Mondays aren't charged).
-  vacationChargeableWeekdays: DEFAULT_CHARGEABLE_WEEKDAYS,
   recencyHalfLifeDays: 45, // recent shifts dominate tip estimates; old data fades, never deleted
 };
 

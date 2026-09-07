@@ -36,12 +36,6 @@ export function validateSettings(s: Partial<Settings>): string[] {
     errs.push("Vacation payroll days must be a positive number (the payslip's “Tage LJ alt”).");
   if (s.vacationDayHours == null || !Number.isFinite(s.vacationDayHours) || s.vacationDayHours <= 0)
     errs.push("Vacation day hours must be a positive number of hours (the payslip pays 6,00).");
-  if (
-    !Array.isArray(s.vacationChargeableWeekdays) ||
-    s.vacationChargeableWeekdays.length === 0 ||
-    s.vacationChargeableWeekdays.some((d) => !Number.isInteger(d) || d < 0 || d > 6)
-  )
-    errs.push("Pick at least one weekday payroll charges a vacation day for.");
   return errs;
 }
 

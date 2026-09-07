@@ -18,9 +18,12 @@ import {
   validateRate,
   validateSettings,
 } from "../lib/settingsStore";
-import type { GrossRate, Payslip, Settings as SettingsT, Vacation } from "../lib/types";
-import { describeChargeableWeekdays } from "../lib/vacationPayroll";
-import { describeFit, fitChargeRules, impliedPerWeek } from "../lib/vacationRuleFit";
+import type { GrossRate, Payslip, Settings as SettingsT, Shift, Vacation } from "../lib/types";
+// Dep-free vacation modules, not the lib/vacation barrel — that pulls date-holidays
+// into the main bundle (it belongs behind VacationPlanner's lazy load).
+import { buildWeekdayHoursProfile } from "../lib/vacationPay";
+import { calibrateCharge, describeCalibration } from "../lib/vacationCharge";
+import { vacationCalendarDates } from "../lib/vacationPayroll";
 import { SyncPanel } from "./SyncPanel";
 
 export function Settings(props: {
@@ -28,6 +31,7 @@ export function Settings(props: {
   rates: GrossRate[];
   payslips: Payslip[];
   vacations: Vacation[];
+  allShifts: Shift[];
   onSettingsSaved: (s: SettingsT) => void;
   onDataReplaced: () => void;
 }) {
@@ -37,6 +41,7 @@ export function Settings(props: {
         settings={props.settings}
         payslips={props.payslips}
         vacations={props.vacations}
+        allShifts={props.allShifts}
         onSaved={props.onSettingsSaved}
       />
       <RatesSection rates={props.rates} />
@@ -61,6 +66,7 @@ function GeneralSection(props: {
   settings: SettingsT;
   payslips: Payslip[];
   vacations: Vacation[];
+  allShifts: Shift[];
   onSaved: (s: SettingsT) => void;
 }) {
   const s = props.settings;
@@ -71,7 +77,6 @@ function GeneralSection(props: {
   const [halfLife, setHalfLife] = useState(String(s.recencyHalfLifeDays));
   const [payrollDays, setPayrollDays] = useState(String(s.vacationPayrollDays));
   const [dayHours, setDayHours] = useState(String(s.vacationDayHours));
-  const [chargeable, setChargeable] = useState<number[]>(s.vacationChargeableWeekdays);
   const [errors, setErrors] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
 
@@ -91,7 +96,6 @@ function GeneralSection(props: {
       recencyHalfLifeDays: hl == null ? NaN : hl,
       vacationPayrollDays: pd == null ? NaN : pd,
       vacationDayHours: dh == null ? NaN : dh,
-      vacationChargeableWeekdays: [...chargeable].sort((a, b) => a - b),
     };
     const errs = validateSettings(next);
     setErrors(errs);
@@ -126,17 +130,16 @@ function GeneralSection(props: {
 
       <h4 style={{ margin: "1rem 0 0.2rem" }}>Payroll vacation rule</h4>
       <p className="hint">
-        How your employer counts and pays a day off. Enter a payslip’s vacation figures below and
-        the app checks these settings against it.
+        A day off costs the <strong>hours you'd have worked</strong> ÷ the flat hours a vacation
+        day is paid at, rounded up — not one day per day away. Both numbers come off your
+        payslip; enter a slip’s vacation figures below and the app checks itself against it.
       </p>
-      <RuleFitNote
+      <CalibrationNote
         settings={s}
         payslips={props.payslips}
         vacations={props.vacations}
-        onApply={(rule, hours) => {
-          setChargeable(rule);
-          if (hours != null) setDayHours(String(hours));
-        }}
+        allShifts={props.allShifts}
+        onApplyDayHours={(hours) => setDayHours(String(hours))}
       />
       <div className="grid">
         <label>Entitlement (days / year)
@@ -146,23 +149,6 @@ function GeneralSection(props: {
           <input value={dayHours} onChange={(e) => setDayHours(e.target.value)} inputMode="decimal" placeholder="6" title={'The payslip’s Urlaub hours ÷ Genommene Urlaubstage.'} />
         </label>
       </div>
-      <fieldset className="weekday-set">
-        <legend>Weekdays charged</legend>
-        {WEEKDAY_LABELS.map((label, wd) => (
-          <label key={wd} className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={chargeable.includes(wd)}
-              onChange={(e) =>
-                setChargeable((prev) =>
-                  e.target.checked ? [...prev, wd] : prev.filter((d) => d !== wd),
-                )
-              }
-            />
-            {label}
-          </label>
-        ))}
-      </fieldset>
 
       <div className="row-actions" style={{ marginTop: "0.75rem" }}>
         <button className="primary" onClick={save}>Save general</button>
@@ -172,55 +158,59 @@ function GeneralSection(props: {
   );
 }
 
-// getDay() order, so the index IS the weekday number stored in settings.
-const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
 /**
- * Live read-out of the counting rule fitted to the payslips, with a one-click apply
- * when the evidence has settled on a single rule that isn't the one saved.
+ * Live read-out of the charge model checked against the payslips.
  *
- * This replaces a paragraph of hand-written prose that had to be edited by a human
- * every time the evidence moved. Now the evidence speaks for itself.
+ * There is no weekday rule to fit any more — the mechanism is known (hours ÷ the
+ * flat day). What's left to verify is whether the roster this app has logged
+ * produces the day counts payroll actually charged, and whether the flat day is
+ * still 6 h. Both are answered from the slips themselves, so nobody has to edit a
+ * paragraph of prose when the evidence moves.
  */
-function RuleFitNote(props: {
+function CalibrationNote(props: {
   settings: SettingsT;
   payslips: Payslip[];
   vacations: Vacation[];
-  onApply: (weekdays: number[], dayHours: number | null) => void;
+  allShifts: Shift[];
+  onApplyDayHours: (hours: number) => void;
 }) {
-  const perWeek = impliedPerWeek(props.settings);
-  const fit = fitChargeRules(props.payslips, props.vacations, {
-    perWeek,
-    current: props.settings.vacationChargeableWeekdays,
-  });
-  const current = [...props.settings.vacationChargeableWeekdays].sort((a, b) => a - b).join(",");
-  const fitted = fit.resolved
-    ? [...fit.rules[0].weekdays].sort((a, b) => a - b).join(",")
-    : null;
-  const differs = fitted != null && fitted !== current;
+  const profile = buildWeekdayHoursProfile(
+    props.allShifts,
+    vacationCalendarDates(props.vacations),
+  );
+  const cal = calibrateCharge(
+    props.payslips,
+    props.vacations,
+    profile,
+    props.settings.vacationDayHours,
+  );
   const hoursDiffer =
-    fit.dayHours != null && Math.abs(fit.dayHours - props.settings.vacationDayHours) > 0.01;
-
-  const currentLabel = describeChargeableWeekdays(props.settings.vacationChargeableWeekdays);
+    cal.dayHours != null && Math.abs(cal.dayHours - props.settings.vacationDayHours) > 0.01;
+  const bad = cal.usable > 0 && !cal.matches;
 
   return (
-    <div className={`hint rule-fit${fit.conflict ? " err" : ""}`}>
+    <div className={`hint rule-fit${bad ? " err" : ""}`}>
       <span className="rule-fit-head">
-        {fit.conflict ? "⚠" : fit.resolved ? "✓" : "?"} Charging{" "}
-        <strong>{currentLabel}</strong>, {r1(props.settings.vacationDayHours)} h a day
+        {bad ? "⚠" : cal.usable > 0 ? "✓" : "?"} Charging{" "}
+        <strong>~{r1(cal.weeklyHours)} h/week ÷ {r1(props.settings.vacationDayHours)} h</strong> ={" "}
+        ~{r1(cal.weeklyHours / Math.max(props.settings.vacationDayHours, 0.001))} days a week off
       </span>
-      <span className="rule-fit-body">{describeFit(fit)}</span>
-      {fit.dayHoursConflict && (
+      <span className="rule-fit-body">{describeCalibration(cal)}</span>
+      {cal.impliedWeeklyHours != null && (
+        <span className="rule-fit-body">
+          Your payslips imply payroll costed you at ~{r1(cal.impliedWeeklyHours)} h/week.
+        </span>
+      )}
+      {cal.dayHoursConflict && (
         <span className="rule-fit-body">
           Your payslips disagree about how many hours a vacation day is paid — check the figures
           entered.
         </span>
       )}
-      {(differs || hoursDiffer) && (
+      {hoursDiffer && (
         <div className="row-actions">
-          <button onClick={() => props.onApply(fit.rules[0]?.weekdays ?? [], fit.dayHours)}>
-            Change to {differs ? fit.rules[0].label : currentLabel}
-            {hoursDiffer ? `, ${r1(fit.dayHours ?? 0)} h a day` : ""}
+          <button onClick={() => props.onApplyDayHours(cal.dayHours as number)}>
+            Change to {r1(cal.dayHours ?? 0)} h a day
           </button>
         </div>
       )}

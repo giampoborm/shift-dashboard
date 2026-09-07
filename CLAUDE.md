@@ -38,7 +38,7 @@ See **[`docs/ROADMAP.md`](docs/ROADMAP.md)** for the current focus, what's next,
 - `src/components/SyncPanel.tsx` — Drive sync section in Settings (client-ID entry, Connect/Sync/Disconnect, conflict guard prompt). Wired into `App.tsx` (silent `syncOnOpen` on mount + status banner; `refreshSettings` after a pull replaces the DB).
 - `src/components/ShiftEditor.tsx` — add/edit/delete modal, post-shift entry (planned→worked), swap-out + swapped-in chaining.
 - `src/components/Calendar.tsx` — custom Monday-start month grid; type-coloured chips (worked=filled, planned=outline, swapped=struck); click day→add, click chip→edit.
-- `src/components/VacationPlanner.tsx` — dual-basis budget bars + range cards; lazy-loaded (isolates heavy `date-holidays`). `src/lib/vacation.ts` — pure vacation math.
+- `src/components/VacationPlanner.tsx` — two budget bars (payroll + Werktage) + range cards; lazy-loaded (isolates heavy `date-holidays`). `src/lib/vacation.ts` is the barrel (pulls `date-holidays` — **never import it from a main-bundle component**); the dep-free halves are `vacationPay.ts` (roster: shifts & hours you'd miss), `vacationCharge.ts` (the hours→days charge, entitlement allocation, calibration) and `vacationPayroll.ts` (pricing).
 - `src/App.tsx` — import buttons, Worked/Planned/All/Calendar/Vacation tabs (Planned+Upcoming were merged), filter bar (type/day/station/date/search), summary + estimate cards, warnings panels, shift + estimate tables.
 - Tests: `*.test.ts` next to each lib (run `npm test` or `/verify`).
 - Shift types live in [[shift-type-taxonomy]]; estimate buckets in [[tip-estimate-buckets]]; vacation basis in [[vacation-entitlement]] (memory).
@@ -90,11 +90,18 @@ TAKE-HOME   = NET wage (monthly) + usable_tips (paid weekly)
 
 ## German vacation rule (implemented + for the optimizer)
 Contract §8 = **24 Werktage (= 20 Arbeitstage) / year**, pro-rata; basis still TBC with employer ([[vacation-entitlement]]). The calculator shows **two consistent currencies of the same ~4 weeks off — never mix consumption from one with the budget of the other**:
-- **Proportional basis (the headline, his reality):** budget = `24 × avgDaysPerWeek / 6` (~16 at his ~3.9 days/week); a vacation costs the *estimated scheduled shifts* in the range (±1σ Bernoulli spread from historical weekday frequency). 16 ÷ 4 = 4 weeks.
+- **Payroll basis (the headline, what HR actually deducts):** a vacation day is a flat **6 h**, and a range costs
+  ```
+  days charged = ceil( hours you'd have worked in the range ÷ 6 )      # per MONTH segment
+  ```
+  against a **20-day** annual entitlement. The hours come from a per-weekday roster profile (worked + sick, past vacations erased from the window), **never** from the planned shifts inside the range — payroll charges a *typical* week, and the roster is deliberately emptied when you book time off.
+  ⚠ **It is NOT one vacation day per day away, and NOT one per shift missed.** His shifts run ~7 h, so a ~28 h week costs ~4.7 → **5** days, and Mon 3 – Tue 11 Aug costs 6 days / 36 h — exactly the 8/2026 payslip. Which weekdays he's *available* on changes nothing; only hours do. See `src/lib/vacationCharge.ts` for the full derivation and the payslip it's grounded in.
 - **Werktage basis (paperwork):** Mon–Sat in range minus Berlin public holidays, vs 24. 24 ÷ 6 = 4 weeks.
-- ⚠ **For vacation, a midnight-crossing night shift = ONE day, not two** (corrected — you're rostered once). The `workingDays` 1-or-2 rule in the *shift/pay* model is a separate concern; don't carry it into vacation math.
 
-**Optimizer (Tier 2, pending):** slide a window across the calendar, rank by calendar-days-off ÷ scheduled-shifts-spent, snap to bridge public holidays.
+Beside them, **"shifts you'd miss"** is opportunity cost, not a budget — those tips are gone and no payslip line replaces them.
+- ⚠ **For vacation, a midnight-crossing night shift = ONE day, not two** (you're rostered once). The `workingDays` 1-or-2 rule in the *shift/pay* model is a separate concern; don't carry it into vacation math.
+
+**Optimizer (Tier 2, pending):** slide a window across the calendar, rank by calendar-days-off ÷ **vacation days charged** (i.e. favour ranges whose calendar days are cheap in rostered hours — a Mon/Thu/Sun-heavy window costs him nothing), snap to bridge public holidays.
 
 ## How to add a feature here (conventions)
 Follow the grain of the existing code:
@@ -109,6 +116,8 @@ Follow the grain of the existing code:
 - **Rate table is authoritative** for gross; the CSV "salary estimate" is validation only (and was computed at the pre-raise €14.50).
 - **Swaps never delete** — `swapped-out` + new `swapped-in`, so history/ratings stay honest.
 - **Vacation night shift = 1 day** (see vacation rule above).
+- **Vacation is charged by HOURS ÷ the flat 6 h day, rounded up — never by calendar weekdays.** Anything that makes "which weekdays are charged" a knob is the bug that was removed on 2026-09-07.
+- **Main-bundle components import `vacationPay`/`vacationCharge`/`vacationPayroll` directly, never the `lib/vacation` barrel** — the barrel drags `date-holidays` out of VacationPlanner's lazy chunk.
 - Dexie `.where()` only on indexed fields.
 
 ## Notes

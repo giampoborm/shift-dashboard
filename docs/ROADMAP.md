@@ -189,58 +189,71 @@ at different altitudes recurs throughout.
   **Now / Doing → Still open**). Structure/IA is resolved and shipped; Home is done.
 - Vacation entitlement counting basis still TBC with employer — see [[vacation-entitlement]].
 
-### ✅ Resolved: the payroll vacation counting rule (2026-09-07)
+### ✅ Superseded: the payroll vacation counting rule is HOURS, not weekdays (2026-09-07)
 
-**Settled by payroll.** The August vacation ran to the **11th**, and **Mondays are not
-chargeable**. Those two facts together make **Tue–Sat** the unique rule: it charges
-Tue4 Wed5 Thu6 Fri7 Sat8 Tue11 = the 6 days the slip shows, while Mon–Fri over the
-same range would have charged 7. The previously-held work is therefore
-evidence-backed, and the hold is lifted.
+**The weekday rule was wrong, and the user caught it.** The app used to charge a
+vacation day for every **Tue–Sat** in the range. That reproduced the 8/2026 payslip's
+6 days for 3–11 Aug, but by coincidence of arithmetic, not by mechanism — and it broke
+in two visible ways:
 
-Already-settled facts it rests on, unchanged: a vacation day is paid a **flat 6.00 h**
-(36 ÷ 6, corroborated by July's single sick day at 6,00 h LFZ Krank), and payroll
-counts the **calendar, not the roster**, at **5 charged days per week** (the 3–9 Aug
-roster lists Gianpaolo on zero days, and 5/week × 4 weeks = the 20-day entitlement).
+- It asserted Mondays and Sundays are *never* charged. They aren't special; they're
+  just days he rarely works. Ticking "Sunday" in Settings to reflect that he *is*
+  available conjured an extra **paid** vacation day into the calendar out of nothing.
+- It could only ever reproduce the day count. The 36,00 STD on the slip came out right
+  only because 6 × 6 h happened to match.
 
-### 🧪 The general logic that replaced the hand-picked rule
+**The real mechanism**, confirmed with his manager:
 
-Rather than hardcode Tue–Sat and re-open this question the next time payroll changes
-anything, the app now **fits the rule to evidence**. The move that makes it work:
+> **hours you would have worked ÷ 6 h (the flat vacation day), rounded UP.**
 
-> **Every payslip is a labelled example.** A slip prints `Genommene Urlaubstage` and
-> `Urlaub … STD` for a range the `vacations` table already holds — an input/output pair.
+A vacation day is worth 6 h, but his shifts run ~7 h and he works ~4 a week, so a week
+away is ~28 h = **4.67 vacation days, not 4**. Mon 3 – Tue 11 Aug is a full week plus a
+Tuesday ≈ 35 h → 5.83 → **6 days = 36,00 h**, both numbers off one quantity. It also
+explains why the 3–9 Aug roster listed him on **zero** days: payroll charges a *typical*
+week, not the (deliberately emptied) actual roster — which is why the estimate is built
+from historical weekday hours and never from the planned shifts inside the range.
 
-- `Payslip` gained optional `vacationDays` / `vacationHours`. **Undefined means "no
-  vacation evidence", explicitly not zero.**
-- `src/lib/vacationRuleFit.ts` holds a hypothesis space of 10 candidate rules (contiguous
-  4–7 day runs in a Mon-first week) and keeps only those reproducing **every** slip.
-  `impliedPerWeek` prunes by the entitlement (20 payroll days ÷ 4 weeks = 5/week).
-  Reproduces the hand-reasoning exactly: August alone leaves `{Tue–Sat, Mon–Thu}`;
-  adding the 5-day/week constraint leaves Tue–Sat alone.
-- `predictChargedDays` returns **min/max/agree** across the survivors. `agree` is the
-  gate day-level advice hangs off — it renders only when the surviving rules agree on
-  *that specific range*, and self-hides when they don't. **The deleted value-per-day
-  card and wasted-days warning are now safe to rebuild behind that gate.**
-- **Estimate forward, observe backward:** `vacationPayForMonth` prefers the slip's own
-  figures over its prediction whenever the slip has them. Never re-derive a number you
-  have been handed — this also stops a later settings change rewriting a paid month.
-- `reconcileMonth` gained `cause` attribution (`vacation-rule` / `hours` / `unknown`),
-  plus `ruleStale` and `needsAttention`. **`ruleStale` is deliberately independent of
-  `discrepant`:** because vacation pay now takes its figures from the slip, the euros
-  reconcile by construction, so a drifted counting rule would otherwise leave no trace.
+Settled with the user when reworking it: baseline = **historical average** (self-updating,
+no new setting), rounding = **always up**, and the third "Proportional (your shifts)"
+budget bar is **gone** — under the hours model the payroll basis *is* roster-derived, so
+it was a redundant restatement.
 
-Settings shows the live fit ("Tue–Sat, confirmed by 1 payslip" / "2 rules still fit …")
-with a one-click **Apply fitted rule**, replacing a paragraph of prose a human had to
-keep editing as the evidence moved.
+### 🧪 What that changed in the code
 
-**Deliberately out of scope:** public-holiday exclusion. Deciding it needs a vacation
-range that actually contains a holiday, and none does yet; adding the dimension now
-would either invent an answer or report permanent false ambiguity. It slots in as a
-second field on `ChargeRule` when such a range exists.
+- **New `src/lib/vacationCharge.ts`** — the whole counting model: month segmentation
+  (each payslip rounds up on its own), the finite-entitlement allocation, and
+  calibration. `allocateVacations` is the **single primitive** every downstream number
+  derives from (month projection, yearly balance, planner card, paid/unpaid split), so
+  they can't drift apart.
+- **New hours side of the roster** in `vacationPay.ts`: `buildWeekdayHoursProfile` /
+  `expectedHoursInRange` / `avgWeeklyHours`. Per-weekday, not a flat weekly average, so
+  a weekend break costs his weekend hours rather than 2/7ths of the week.
+- **`vacationPayroll.ts` is now pricing only** — euros, and deferring to the payslip
+  once one exists. Counting is roster maths, pricing is rate-table maths; mixing them is
+  what made the old module hard to follow.
+- **Deleted:** `vacationRuleFit.ts` (a hypothesis space of 10 weekday rules — there is
+  no space to search once the mechanism is known) and `vacationBudget.ts` (its
+  date-level entitlement split has no dates to work with any more). The
+  chargeable-weekday **Settings checkbox set is gone**, along with `Settings.vacationChargeableWeekdays`.
+- **Calibration replaced fitting.** Every payslip is still a labelled example, but the
+  question is now *"does hours ÷ 6 reproduce what the slip charged, and if not, what
+  weekly hours would have?"*. `calibrateCharge` answers both; Settings and the planner
+  show `~28 h/week ÷ 6 h`, whether it matches the slips, and the weekly hours the slips
+  themselves imply.
+- **Estimate forward, observe backward** survives unchanged: `vacationPayForMonth`
+  prefers the slip's own figures whenever it has them, and a finished vacation keeps the
+  `payrollDays` snapshot it was saved with (now alongside `payrollHours`).
+- **Calendar no longer colours individual "charged" days.** There are none — the charge
+  is a monthly hours total. Every day of a vacation reads the same, with the range's
+  real cost and net pay in the tooltip. That per-day paid/free split was the artefact
+  that made the Sunday bug visible.
 
-Still removed at the user's request: the **"tips forgone"** card. Vacation pay replaces
-wage only and the forfeited tips are real, but it's a number he can't act on — noise,
-not insight. Scope stays a **calculator + logger**, not an optimizer.
+**Deliberately out of scope:** public-holiday handling. Under the hours model a holiday
+inside a vacation only matters if he'd have been rostered then, and no recorded range
+contains one to check against.
+
+Still removed at the user's request: the **"tips forgone"** card. Scope stays a
+**calculator + logger**, not an optimizer.
 
 **Not settled:** vacation entitlement counting basis with the employer — see
 [[vacation-entitlement]].
