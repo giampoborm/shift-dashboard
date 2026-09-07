@@ -44,6 +44,22 @@ function breakdownText(m: { banked: number; projected: number }): string {
   return `${r(m.banked)}`;
 }
 
+// Where a month's vacation figures came from. Shown because the three sources can
+// legitimately differ — the model re-estimates from your current roster, while a
+// recorded or paid vacation is fixed history — and an unexplained difference
+// between Home and the planner is exactly what makes a number untrustworthy.
+const VACATION_SOURCE_LABEL = {
+  payslip: "from your payslip",
+  recorded: "as recorded",
+  estimated: "estimated",
+} as const;
+const VACATION_SOURCE_HELP = {
+  payslip: "The figures your payslip actually charged — the app isn't guessing here.",
+  recorded: "The day count saved with this vacation when you logged it, not re-estimated.",
+  estimated:
+    "Worked out from your typical roster hours ÷ the flat vacation day. Add this month's payslip vacation figures in Settings to replace it with the real number.",
+} as const;
+
 const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SHIFT_TYPES: ShiftType[] = [
   "opening",
@@ -390,6 +406,9 @@ function Home(props: {
         hours: vacationPay.hours,
         gross: vacationPay.banked.gross + vacationPay.projected.gross,
         observed: vacationPay.observed,
+        // Deliberately WITHOUT todayIso: this is the model's own prediction, and
+        // letting it fall back to the saved snapshot would have it agree with the
+        // slip by construction — the drift it exists to catch would never show.
         expectedDays: segmentsInMonth(m, vacations ?? [], hoursProfile, settings).reduce(
           (n, s) => n + s.days,
           0,
@@ -454,6 +473,7 @@ function Home(props: {
       vacationDays: vacationPay.days,
       vacationNet: vacationPay.banked.net + vacationPay.projected.net,
       vacationHours: vacationPay.hours,
+      vacationSource: vacationPay.source,
       takeHome: {
         banked: bankedNet + banked.usableTips + vacBanked.net,
         projected: projected.takeHome.median + vacProjected.net,
@@ -557,6 +577,11 @@ function Home(props: {
         <p className="muted sick-note">
           Includes {month.vacationDays} vacation day{month.vacationDays > 1 ? "s" : ""} ·{" "}
           {r1(month.vacationHours)} h paid · {eur(month.vacationNet)} net wage, no tips
+          {" ("}
+          <span title={VACATION_SOURCE_HELP[month.vacationSource]}>
+            {VACATION_SOURCE_LABEL[month.vacationSource]}
+          </span>
+          {")"}
           {month.plannedOnVacation > 0 && (
             <>
               {" · "}

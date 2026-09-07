@@ -116,6 +116,7 @@ Follow the grain of the existing code:
 - **Rate table is authoritative** for gross; the CSV "salary estimate" is validation only (and was computed at the pre-raise €14.50).
 - **Swaps never delete** — `swapped-out` + new `swapped-in`, so history/ratings stay honest.
 - **Vacation night shift = 1 day** (see vacation rule above).
+- **A past vacation is never re-estimated.** Precedence is payslip figures → the `payrollDays` snapshot saved with the vacation → the model. `allocateVacations(…, todayIso)` encodes this, so every surface agrees; don't re-derive a past month in a component.
 - **Vacation is charged by HOURS ÷ the flat 6 h day, rounded up — never by calendar weekdays.** Anything that makes "which weekdays are charged" a knob is the bug that was removed on 2026-09-07.
 - **Main-bundle components import `vacationPay`/`vacationCharge`/`vacationPayroll` directly, never the `lib/vacation` barrel** — the barrel drags `date-holidays` out of VacationPlanner's lazy chunk.
 - Dexie `.where()` only on indexed fields.

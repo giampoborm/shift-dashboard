@@ -83,10 +83,15 @@ describe("vacationCosts", () => {
   it("reports a finished vacation's saved day count, capping its paid part", () => {
     const vacs = [vacation("2026-07-07", "2026-07-13", { id: 1, payrollDays: 3 })];
     const costs = vacationCosts(vacs, ROSTER, SETTINGS, RATES, PAYSLIPS, "2026-09-07");
-    expect(costs.get(1)!.days).toBe(3); // what payroll actually charged
+    expect(costs.get(1)!.days).toBe(3); // what payroll actually charged, not the model's 5
     expect(costs.get(1)!.paidDays).toBe(3); // never more than the snapshot
-    // Without a "today" the model's own estimate stands.
-    expect(vacationCosts(vacs, ROSTER, SETTINGS, RATES, PAYSLIPS).get(1)!.days).toBe(5);
+    // With no "today" to say what has been paid, the snapshot is still the safe answer.
+    expect(vacationCosts(vacs, ROSTER, SETTINGS, RATES, PAYSLIPS).get(1)!.days).toBe(3);
+  });
+
+  it("re-estimates a vacation that hasn't happened yet", () => {
+    const vacs = [vacation("2026-12-01", "2026-12-07", { id: 1, payrollDays: 99 })];
+    expect(vacationCosts(vacs, ROSTER, SETTINGS, RATES, PAYSLIPS, "2026-09-07").get(1)!.days).toBe(5);
   });
 });
 
@@ -115,6 +120,25 @@ describe("vacationPayForMonth", () => {
     expect(m.unpaidDays).toBe(0);
     expect(m.projected.net).toBe(0);
     expect(m.banked.net).toBeCloseTo(36 * 15.5 * 0.75, 5);
+  });
+
+  it("uses the saved day count for a past vacation, not a fresh estimate", () => {
+    // The Home month line's bug: August was recorded as 6 days, but with no
+    // vacation figures on the slip the month re-derived it from the roster and
+    // showed 5 / 30 h while every other surface said 6 / 36.
+    const recorded = [vacation("2026-08-03", "2026-08-11", { id: 1, payrollDays: 6 })];
+    const m = vacationPayForMonth(
+      "2026-08",
+      recorded,
+      // A roster that has drifted since — the model alone would now say 4 days.
+      buildWeekdayHoursProfile([shift("2026-06-02", 7), shift("2026-06-09", 7)]),
+      SETTINGS,
+      RATES,
+      PAYSLIPS,
+      "2026-09-07",
+    );
+    expect(m.days).toBe(6);
+    expect(m.hours).toBe(36);
   });
 
   it("splits banked from projected by hours when today falls mid-vacation", () => {

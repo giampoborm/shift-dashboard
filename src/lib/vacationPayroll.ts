@@ -122,6 +122,7 @@ export function vacationCosts(
     profile,
     settings.vacationDayHours,
     settings.vacationPayrollDays,
+    todayIso,
   );
   for (const v of vacations) {
     if (v.id == null) continue;
@@ -135,8 +136,8 @@ export function vacationCosts(
       gross += segGross;
       net += segGross * (factor ?? 1);
     }
-    const finished = todayIso != null && v.to < todayIso && v.payrollDays != null;
-    const days = finished ? (v.payrollDays as number) : mine.reduce((n, s) => n + s.days, 0);
+    // `allocateVacations` has already substituted the snapshot for a finished trip.
+    const days = mine.reduce((n, s) => n + s.days, 0);
     paidDays = Math.min(paidDays, days);
     out.set(v.id, {
       days,
@@ -172,20 +173,27 @@ export interface MonthVacationPay {
   projected: { days: number; gross: number; net: number };
   /** True when these figures came off the payslip rather than from the model. */
   observed: boolean;
+  /** Where the day count came from, so the UI can say so rather than leaving the
+   *  reader to wonder why Home and the planner ever differ. */
+  source: "payslip" | "recorded" | "estimated";
 }
 
-/** The allocated segments of every recorded vacation landing in one month. */
+/** The allocated segments of every recorded vacation landing in one month.
+ *  Pass `todayIso` so a finished vacation reports what it was charged rather than
+ *  being re-estimated — see allocateVacations. */
 export function segmentsInMonth(
   month: string,
   vacations: Vacation[],
   profile: WeekdayHours[],
   settings: PayrollSettings,
+  todayIso?: string,
 ): AllocatedSegment[] {
   return allocateVacations(
     vacations,
     profile,
     settings.vacationDayHours,
     settings.vacationPayrollDays,
+    todayIso,
   ).filter((s) => s.month === month);
 }
 
@@ -214,7 +222,7 @@ export function vacationPayForMonth(
   todayIso: string,
 ): MonthVacationPay {
   const { factor } = netFactorForMonth(month, payslips);
-  const segments = segmentsInMonth(month, vacations, profile, settings);
+  const segments = segmentsInMonth(month, vacations, profile, settings, todayIso);
   const observed = observedVacationForMonth(month, payslips);
 
   if (observed) {
@@ -232,6 +240,7 @@ export function vacationPayForMonth(
       banked: { days: observed.days, gross, net: gross * (factor ?? 1) },
       projected: { days: 0, gross: 0, net: 0 },
       observed: true,
+      source: "payslip",
     };
   }
 
@@ -265,5 +274,7 @@ export function vacationPayForMonth(
     banked,
     projected,
     observed: false,
+    source:
+      segments.length > 0 && segments.every((s) => s.fromSnapshot) ? "recorded" : "estimated",
   };
 }

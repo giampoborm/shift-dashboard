@@ -68,6 +68,9 @@ export interface MonthSegment {
   rawDays: number;
   /** What the slip charges: rawDays rounded up. */
   days: number;
+  /** True when `days` is the count saved with a finished vacation rather than the
+   *  model's own estimate — so the UI can say which it is showing. */
+  fromSnapshot?: boolean;
 }
 
 /** Split [fromIso, toIso] at month boundaries. */
@@ -157,22 +160,74 @@ export interface AllocatedSegment extends MonthSegment {
 }
 
 /**
+ * Spread a finished vacation's SAVED day count across its month segments.
+ *
+ * The snapshot is one number for the whole trip, but the entitlement and the
+ * monthly projection work per segment, so it has to be apportioned — by the
+ * modelled days, largest remainder first, so the parts always add back up to the
+ * snapshot exactly. A trip whose model says zero days everywhere (its weekdays
+ * are ones he never works) still has to put the snapshot somewhere: the first
+ * segment takes it.
+ */
+function applySnapshot(segments: MonthSegment[], snapshotDays: number): MonthSegment[] {
+  if (segments.length === 0) return segments;
+  segments = segments.map((s) => ({ ...s, fromSnapshot: true }));
+  const modelled = segments.reduce((n, s) => n + s.days, 0);
+  if (modelled === snapshotDays) return segments;
+  if (modelled === 0) {
+    return segments.map((s, i) => ({ ...s, days: i === 0 ? snapshotDays : s.days }));
+  }
+  const exact = segments.map((s) => (s.days / modelled) * snapshotDays);
+  const out = segments.map((s, i) => ({ ...s, days: Math.floor(exact[i]) }));
+  let left = snapshotDays - out.reduce((n, s) => n + s.days, 0);
+  const order = exact
+    .map((v, i) => ({ i, frac: v - Math.floor(v) }))
+    .sort((a, b) => b.frac - a.frac);
+  for (const { i } of order) {
+    if (left <= 0) break;
+    out[i].days += 1;
+    left -= 1;
+  }
+  return out;
+}
+
+/**
  * Every recorded vacation, split by month and charged against the entitlement.
  *
  * The budget is PER CALENDAR YEAR and is consumed in DATE order — an earlier trip
  * eats it first, whichever you happened to type in first. This is the single
  * primitive every other vacation figure in the app derives from.
+ *
+ * OBSERVE BACKWARD, ESTIMATE FORWARD. With `todayIso`, a vacation that has already
+ * ended reports the day count it was SAVED with — what payroll actually charged —
+ * instead of being re-derived. Refining the model, or logging a few more shifts,
+ * must never rewrite a month you have already been paid for. A trip still ahead of
+ * you is an estimate by definition, so it is recomputed every time: booking
+ * something months out and then learning more about your roster should update what
+ * it's going to cost.
+ *
+ * Doing this HERE, rather than in each caller, is deliberate. The Home month line
+ * used to re-estimate a past vacation while the planner table, the yearly balance
+ * and the calendar tooltip all showed its snapshot — so August read as 5 days /
+ * 30 h in one place and 6 / 36 in three others. One primitive, one answer.
  */
 export function allocateVacations(
   vacations: Vacation[],
   profile: WeekdayHours[],
   dayHours: number,
   entitlement: number,
+  todayIso?: string,
 ): AllocatedSegment[] {
   const segments = vacations
-    .flatMap((v) =>
-      chargeSegments(v.from, v.to, profile, dayHours).map((s) => ({ ...s, vacationId: v.id })),
-    )
+    .flatMap((v) => {
+      const mine = chargeSegments(v.from, v.to, profile, dayHours);
+      // Without a `todayIso` we can't tell what has already been paid, so a
+      // snapshot — where one exists — always wins: the history-preserving answer
+      // is the safe default for a caller that can't say when "now" is.
+      const finished = v.payrollDays != null && (todayIso == null || v.to < todayIso);
+      const withSnapshot = finished ? applySnapshot(mine, v.payrollDays as number) : mine;
+      return withSnapshot.map((s) => ({ ...s, vacationId: v.id }));
+    })
     .sort((a, b) => a.from.localeCompare(b.from));
 
   const usedByYear = new Map<string, number>();
@@ -233,13 +288,9 @@ export function vacationBudgetUse(
 }
 
 /**
- * Payroll days used in a calendar year.
- *
- * A FINISHED vacation keeps the snapshot taken when it was saved — that is what
- * payroll actually charged, and refining the model later must not rewrite a month
- * that has already been paid. A vacation that hasn't ended yet is still an
- * estimate, so it is recomputed every time. Without `todayIso` the snapshot always
- * wins: a caller that can't say when "now" is gets the history-preserving answer.
+ * Payroll days used in a calendar year — finished trips at what they were charged,
+ * upcoming ones at what they're currently estimated to cost. `allocateVacations`
+ * already encodes that rule, so this is just a sum.
  */
 export function payrollDaysTakenInYear(
   vacations: Vacation[],
@@ -248,16 +299,9 @@ export function payrollDaysTakenInYear(
   dayHours: number,
   todayIso?: string,
 ): number {
-  const y = String(year);
-  const snapshotted = vacations.filter((v) => v.payrollDays != null && (todayIso == null || v.to < todayIso));
-  const live = vacations.filter((v) => !snapshotted.includes(v));
-  const fromModel = allocateVacations(live, profile, dayHours, Number.POSITIVE_INFINITY)
-    .filter((s) => s.month.slice(0, 4) === y)
+  return allocateVacations(vacations, profile, dayHours, Number.POSITIVE_INFINITY, todayIso)
+    .filter((s) => s.month.slice(0, 4) === String(year))
     .reduce((n, s) => n + s.days, 0);
-  const fromSnapshot = snapshotted
-    .filter((v) => v.from.slice(0, 4) === y)
-    .reduce((n, v) => n + (v.payrollDays ?? 0), 0);
-  return fromModel + fromSnapshot;
 }
 
 // ---------------------------------------------------------------------------
