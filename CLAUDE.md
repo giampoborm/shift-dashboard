@@ -121,6 +121,7 @@ Follow the grain of the existing code:
 - **Vacation night shift = 1 day** (see vacation rule above).
 - **A past vacation is never re-estimated.** Precedence is payslip figures → the `payrollDays` snapshot saved with the vacation → the model. `allocateVacations(…, todayIso)` encodes this, so every surface agrees; don't re-derive a past month in a component.
 - **Vacation is charged by ELIGIBLE DAYS × (weekly hours ÷ eligible days/week) ÷ the flat 6 h day, rounded up.** Two things it must never become: "one day charged per calendar weekday in the range" (model 1 — made availability cost money), or hours from a per-weekday *historical* profile (model 2 — dropped the day he came back on, because he's only sometimes rostered then). Both are documented in `vacationCharge.ts`; don't re-derive them.
+- **The model's self-check is a WARNING, not a read-out.** `CalibrationWarning` renders nothing when the estimate agrees with the payslips, one dismissible line when it doesn't (dismissal keyed to the specific discrepancy, so it returns if the numbers move). Don't reintroduce an always-on status badge — the user asked for silence when things are fine.
 - **Main-bundle components import `vacationPay`/`vacationCharge`/`vacationPayroll` directly, never the `lib/vacation` barrel** — the barrel drags `date-holidays` out of VacationPlanner's lazy chunk.
 - Dexie `.where()` only on indexed fields.
 

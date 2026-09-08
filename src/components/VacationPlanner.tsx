@@ -28,7 +28,6 @@ import {
   calibrateCharge,
   chargeModel,
   chargeVacation,
-  describeCalibration,
   describeEligibleWeekdays,
   hoursPerEligibleDay,
   payrollDaysTakenInYear,
@@ -36,6 +35,7 @@ import {
   vacationCalendarDates,
   vacationPayrollPay,
 } from "../lib/vacation";
+import { CalibrationWarning } from "./CalibrationWarning";
 import { formatDate, formatDateShort } from "../lib/format";
 import type { GrossRate, Payslip, Settings, Shift } from "../lib/types";
 
@@ -246,18 +246,9 @@ export function VacationPlanner(props: {
             {r1(calc.weeklyHours / dayHours)} vacation days, not the {r1(calc.daysPerWeek)} shifts
             you'd actually miss — your shifts are longer than a {r1(dayHours)} h vacation day.
             Widening the eligible days in Settings doesn't make a holiday cost more; it only
-            changes how a part-week at either end is counted. {describeCalibration(cal)}
+            changes how a part-week at either end is counted.
           </p>
-
-          {cal.impliedWeeklyHours != null && (
-            <p className="muted" style={{ fontSize: "0.78rem" }}>
-              Cross-check: your payslips' vacation hours imply payroll costed you at{" "}
-              <strong>~{r1(cal.impliedWeeklyHours)} h/week</strong>; your logged roster
-              averages <strong>~{r1(cal.weeklyHours)} h/week</strong>.
-              {Math.abs(cal.impliedWeeklyHours - cal.weeklyHours) > 2 &&
-                " That gap is big enough to shift a day either way on a long range — some shifts may be missing from the log."}
-            </p>
-          )}
+          <CalibrationWarning cal={cal} dayHours={dayHours} />
 
           {budget.unpaid > 0 && (
             <p className="err" style={{ fontSize: "0.82rem" }}>

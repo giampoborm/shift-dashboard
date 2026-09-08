@@ -22,14 +22,9 @@ import type { GrossRate, Payslip, Settings as SettingsT, Shift, Vacation } from 
 // Dep-free vacation modules, not the lib/vacation barrel — that pulls date-holidays
 // into the main bundle (it belongs behind VacationPlanner's lazy load).
 import { buildRosterHours } from "../lib/vacationPay";
-import {
-  calibrateCharge,
-  chargeModel,
-  describeCalibration,
-  describeEligibleWeekdays,
-  hoursPerEligibleDay,
-} from "../lib/vacationCharge";
+import { calibrateCharge, chargeModel, hoursPerEligibleDay } from "../lib/vacationCharge";
 import { vacationCalendarDates } from "../lib/vacationPayroll";
+import { CalibrationWarning } from "./CalibrationWarning";
 import { SyncPanel } from "./SyncPanel";
 
 export function Settings(props: {
@@ -87,6 +82,15 @@ function GeneralSection(props: {
   const [errors, setErrors] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
 
+  // Live read-out of the charge model, using the weekdays currently TICKED rather
+  // than the saved ones — the caption has to move as you tick, or it isn't a
+  // read-out of the control it sits under.
+  const model = chargeModel(
+    { ...s, vacationEligibleWeekdays: eligible },
+    buildRosterHours(props.allShifts, vacationCalendarDates(props.vacations)),
+  );
+  const cal = calibrateCharge(props.payslips, props.vacations, model);
+
   async function save() {
     setSaved(false);
     const pct = parseNum(tipPct);
@@ -143,13 +147,6 @@ function GeneralSection(props: {
         rounded up — not one day per day off. Enter a slip’s vacation figures below and the app
         checks itself against it.
       </p>
-      <CalibrationNote
-        settings={s}
-        payslips={props.payslips}
-        vacations={props.vacations}
-        allShifts={props.allShifts}
-        onApplyDayHours={(hours) => setDayHours(String(hours))}
-      />
       <div className="grid">
         <label>Entitlement (days / year)
           <input value={payrollDays} onChange={(e) => setPayrollDays(e.target.value)} inputMode="decimal" placeholder="20" title={'The payslip’s “Tage LJ alt”.'} />
@@ -176,11 +173,19 @@ function GeneralSection(props: {
         ))}
       </fieldset>
       <p className="hint">
-        Your weekly hours are divided across these days, and a vacation is charged for the
-        eligible days it covers. Ticking one more <em>doesn’t</em> make a holiday cost more — it
-        lowers the hours each day carries by the same proportion. It only changes how a vacation
-        that starts or ends mid-week is counted, which is where the real day comes from.
+        <strong>
+          ~{r1(model.weeklyHours)} h/week ÷ {new Set(eligible).size} days ={" "}
+          {r1(hoursPerEligibleDay(model))} h per day away.
+        </strong>{" "}
+        Ticking one more day <em>doesn’t</em> make a holiday cost more — it lowers the hours each
+        day carries by the same proportion. It only changes how a vacation that starts or ends
+        mid-week is counted.
       </p>
+      <CalibrationWarning
+        cal={cal}
+        dayHours={s.vacationDayHours}
+        onApplyDayHours={(hours) => setDayHours(String(hours))}
+      />
 
       <div className="row-actions" style={{ marginTop: "0.75rem" }}>
         <button className="primary" onClick={save}>Save general</button>
@@ -192,62 +197,6 @@ function GeneralSection(props: {
 
 // getDay() order, so the index IS the weekday number stored in settings.
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-/**
- * Live read-out of the charge model, checked against the payslips.
- *
- * There is no counting rule to fit any more — the mechanism is known. What is left
- * to verify is whether the roster this app has logged reproduces the day counts
- * payroll actually charged, and whether the flat day is still 6 h. Both are
- * answered from the slips themselves, so nobody has to edit a paragraph of prose
- * when the evidence moves.
- */
-function CalibrationNote(props: {
-  settings: SettingsT;
-  payslips: Payslip[];
-  vacations: Vacation[];
-  allShifts: Shift[];
-  onApplyDayHours: (hours: number) => void;
-}) {
-  const roster = buildRosterHours(props.allShifts, vacationCalendarDates(props.vacations));
-  const model = chargeModel(props.settings, roster);
-  const cal = calibrateCharge(props.payslips, props.vacations, model);
-  const hoursDiffer =
-    cal.dayHours != null && Math.abs(cal.dayHours - props.settings.vacationDayHours) > 0.01;
-  const bad = cal.usable > 0 && !cal.matches;
-
-  return (
-    <div className={`hint rule-fit${bad ? " err" : ""}`}>
-      <span className="rule-fit-head">
-        {bad ? "\u26a0" : cal.usable > 0 ? "\u2713" : "?"} ~{r1(model.weeklyHours)} h/week over{" "}
-        <strong>{describeEligibleWeekdays(model.eligibleWeekdays)}</strong> ={" "}
-        <strong>{r1(hoursPerEligibleDay(model))} h</strong> per day away
-      </span>
-      <span className="rule-fit-body">{describeCalibration(cal)}</span>
-      {cal.impliedWeeklyHours != null && (
-        <span className="rule-fit-body">
-          Your payslips imply payroll costed you at ~{r1(cal.impliedWeeklyHours)} h/week
-          {Math.abs(cal.impliedWeeklyHours - model.weeklyHours) > 2
-            ? " — far enough from your logged hours to shift a day on a long range. Some shifts may be missing from the log."
-            : "."}
-        </span>
-      )}
-      {cal.dayHoursConflict && (
-        <span className="rule-fit-body">
-          Your payslips disagree about how many hours a vacation day is paid — check the figures
-          entered.
-        </span>
-      )}
-      {hoursDiffer && (
-        <div className="row-actions">
-          <button onClick={() => props.onApplyDayHours(cal.dayHours as number)}>
-            Change to {r1(cal.dayHours ?? 0)} h a day
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
 
 const r1 = (n: number) => Math.round(n * 10) / 10;
 
