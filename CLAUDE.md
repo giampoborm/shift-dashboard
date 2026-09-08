@@ -92,10 +92,13 @@ TAKE-HOME   = NET wage (monthly) + usable_tips (paid weekly)
 Contract §8 = **24 Werktage (= 20 Arbeitstage) / year**, pro-rata; basis still TBC with employer ([[vacation-entitlement]]). The calculator shows **two consistent currencies of the same ~4 weeks off — never mix consumption from one with the budget of the other**:
 - **Payroll basis (the headline, what HR actually deducts):** a vacation day is a flat **6 h**, and a range costs
   ```
-  days charged = ceil( hours you'd have worked in the range ÷ 6 )      # per MONTH segment
+  hours per eligible day = weekly hours ÷ eligible days per week      # 28 ÷ 6 = 4.67 h
+  missed hours           = eligible days inside the range × that
+  days charged           = ceil( missed hours ÷ 6 )                   # per MONTH segment
   ```
-  against a **20-day** annual entitlement. The hours come from a per-weekday roster profile (worked + sick, past vacations erased from the window), **never** from the planned shifts inside the range — payroll charges a *typical* week, and the roster is deliberately emptied when you book time off.
-  ⚠ **It is NOT one vacation day per day away, and NOT one per shift missed.** His shifts run ~7 h, so a ~28 h week costs ~4.7 → **5** days, and Mon 3 – Tue 11 Aug costs 6 days / 36 h — exactly the 8/2026 payslip. Which weekdays he's *available* on changes nothing; only hours do. See `src/lib/vacationCharge.ts` for the full derivation and the payslip it's grounded in.
+  against a **20-day** annual entitlement. Weekly hours come from the logged roster (worked + sick, past vacations erased from the window); **eligible days** are the weekdays he *could* be rostered on (Settings, default **Tue–Sun** — the venue is shut Mondays). Deliberately **not** the actual roster inside the range: payroll charges a *typical* week, and the roster is emptied when you book time off (the 3–9 Aug plan lists him on zero days).
+  ⚠ **It is NOT one vacation day per day away, and NOT one per shift missed.** A ~28 h week costs ~4.7 → **5** days; Mon 3 – Tue 11 Aug is 7 eligible days × 4.67 = 32.7 h → 5.44 → **6 days / 36 h**, exactly the 8/2026 payslip.
+  ⚠ **The eligible-weekday set is not a "which days get charged" knob.** Its count sits in the numerator *and* the denominator, so widening it barely moves a total — it only fixes how a part-week at either end is counted. See `src/lib/vacationCharge.ts` for the derivation, the payslip, and the two earlier models that got this wrong.
 - **Werktage basis (paperwork):** Mon–Sat in range minus Berlin public holidays, vs 24. 24 ÷ 6 = 4 weeks.
 
 Beside them, **"shifts you'd miss"** is opportunity cost, not a budget — those tips are gone and no payslip line replaces them.
@@ -117,7 +120,7 @@ Follow the grain of the existing code:
 - **Swaps never delete** — `swapped-out` + new `swapped-in`, so history/ratings stay honest.
 - **Vacation night shift = 1 day** (see vacation rule above).
 - **A past vacation is never re-estimated.** Precedence is payslip figures → the `payrollDays` snapshot saved with the vacation → the model. `allocateVacations(…, todayIso)` encodes this, so every surface agrees; don't re-derive a past month in a component.
-- **Vacation is charged by HOURS ÷ the flat 6 h day, rounded up — never by calendar weekdays.** Anything that makes "which weekdays are charged" a knob is the bug that was removed on 2026-09-07.
+- **Vacation is charged by ELIGIBLE DAYS × (weekly hours ÷ eligible days/week) ÷ the flat 6 h day, rounded up.** Two things it must never become: "one day charged per calendar weekday in the range" (model 1 — made availability cost money), or hours from a per-weekday *historical* profile (model 2 — dropped the day he came back on, because he's only sometimes rostered then). Both are documented in `vacationCharge.ts`; don't re-derive them.
 - **Main-bundle components import `vacationPay`/`vacationCharge`/`vacationPayroll` directly, never the `lib/vacation` barrel** — the barrel drags `date-holidays` out of VacationPlanner's lazy chunk.
 - Dexie `.where()` only on indexed fields.
 

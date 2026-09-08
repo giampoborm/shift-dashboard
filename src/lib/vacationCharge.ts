@@ -1,54 +1,128 @@
-// How many vacation days a range costs — the HOURS model.
+// How many vacation days a range costs — the model, and the evidence for it.
 //
-// WHAT CHANGED, AND WHY (2026-09-07)
-// ----------------------------------
-// The first model counted CALENDAR WEEKDAYS: "payroll charges a day for every
-// Tue–Sat in the range." It reproduced the one payslip we had, but by coincidence
-// of arithmetic rather than by mechanism, and it was wrong in two visible ways:
+// THE RULE (confirmed by the user with his manager, 2026-09-07)
+// ------------------------------------------------------------
+//     hours per eligible day = weekly hours / eligible days per week
+//     missed hours           = eligible days inside the range x hours per eligible day
+//     days charged           = ceil( missed hours / 6 h )        # per MONTH segment
 //
-//   * It claimed Mondays and Sundays are never charged. They aren't special —
-//     they're just days he rarely works. Ticking "Sunday" in Settings to reflect
-//     that he *is* available then invented an extra paid vacation day out of thin
-//     air, which is nonsense: being Sunday-available doesn't lengthen a holiday.
-//   * It could only ever reproduce the day count. The paid HOURS came out right
-//     only because 6 days x 6 h happened to equal the slip's 36,00 STD.
+// A vacation day is worth a flat 6 h. But he works ~28 h a week, so a week away is
+// ~28 h = 4.67 vacation days, NOT 4 and NOT "one per day off". Mon 3 – Tue 11 Aug,
+// at 6 eligible days a week (the venue is shut Mondays):
+//     28 / 6      = 4.67 h per eligible day
+//     eligible days away: Tue4 Wed5 Thu6 Fri7 Sat8 Sun9 Tue11 = 7   (Mondays skipped)
+//     7 x 4.67    = 32.7 h  ->  32.7 / 6 = 5.44  ->  6 days, 36,00 h
+// which is exactly the 8/2026 payslip, both numbers, out of one quantity.
 //
-// The real mechanism, which the user confirmed with his manager, is:
+// WHY "ELIGIBLE DAYS" AND NOT THE ACTUAL ROSTER
+// ---------------------------------------------
+// Payroll charges a TYPICAL week, not the roster inside the range — it rosters him
+// off precisely because he booked time off (the 3–9 Aug plan lists him on zero
+// days). So his weekly hours are spread evenly across the days he COULD be
+// rostered, and every eligible day away carries its share.
 //
-//     hours you would have worked  ÷  6 h (the flat vacation day)  →  round up
+// This module has now had three models, and the first two failed instructively:
 //
-// A vacation day is worth 6 h, but his shifts run ~7 h and he works ~4 a week.
-// So a week away is ~28 h = 4.67 vacation days, NOT 4 — which is exactly why a
-// Mon-to-next-Tuesday trip lands on the payslip as 6 days / 36,00 h rather than
-// as "5 shifts missed". Roster-shaped input, payroll-shaped output.
+//  1. One day charged per Tue–Sat CALENDAR WEEKDAY in the range. Matched the August
+//     slip by coincidence of arithmetic, and treated availability as cost: ticking
+//     "Sunday" to say he IS Sunday-available invented an extra PAID vacation day.
+//  2. Hours from a PER-WEEKDAY historical profile. Right mechanism, wrong input: on
+//     an irregular roster a weekday he is only sometimes on scores near zero, so the
+//     Tuesday he came back on contributed almost nothing and the same range came out
+//     at 30 h / 5 days instead of 36 h / 6.
 //
-// It reproduces BOTH numbers on the 8/2026 slip from one quantity:
-//     3–11 Aug = 9 calendar days ~ 28 h/wk x 9/7 ~ 36 h  ->  36 / 6 = 6,00 days
-// and it explains why the plan for 3–9 Aug rostered him on ZERO days: payroll
-// charges a TYPICAL week, not the (deliberately emptied) actual roster. That is
-// also why the estimate is built from historical weekday hours and never from the
-// planned shifts sitting inside the range.
+// The eligible-day count appears in the numerator AND the denominator, so widening
+// eligibility barely moves the total — it only handles partial weeks properly:
+//     5 eligible/wk -> 5.60 h/day x 6 days = 33.6 h -> 6 days
+//     6 eligible/wk -> 4.67 h/day x 7 days = 32.7 h -> 6 days
+//     7 eligible/wk -> 4.00 h/day x 9 days = 36.0 h -> 6 days
+// That self-correction is the property both earlier models lacked, and it is why
+// the eligible-weekday setting is safe to expose. Note what it means: NOT "which
+// weekdays payroll charges" (model 1's mistake) but "which days could you have been
+// rostered, to spread your hours over".
 //
-// ROUNDING is ceil, per the user: the manager rounds any part-day up to a whole
-// one (5.2 -> 6). It happens ONCE PER MONTH SEGMENT, because the payslip is
-// monthly — a range crossing a month boundary is charged, and rounded, on each
-// slip separately.
+// ROUNDING is ceil — the manager rounds any part-day up. It happens ONCE PER MONTH
+// SEGMENT, because the payslip is monthly.
 //
 // Every downstream number — the month projection, the yearly balance, the planner
-// card, the paid/unpaid split — is derived from `allocateVacations` below, so they
+// card, the paid/unpaid split — derives from `allocateVacations` below, so they
 // cannot drift apart from each other.
 //
 // Dep-free (no date-holidays), so callers outside VacationPlanner's lazy boundary
 // can use it.
 
-import { format, parseISO } from "date-fns";
-import type { Payslip, Vacation } from "./types";
-import { avgWeeklyHours, expectedHoursInRange, type WeekdayHours } from "./vacationPay";
+import { eachDayOfInterval, format, getDay, parseISO } from "date-fns";
+import type { Payslip, Settings, Vacation } from "./types";
+import type { RosterHours } from "./vacationPay";
 
 /** Flat hours one vacation day is paid at ("Urlaub" STD ÷ "Genommene Urlaubstage"). */
 export const DEFAULT_VACATION_DAY_HOURS = 6;
 /** Annual entitlement in payroll days ("Tage LJ alt"). */
 export const DEFAULT_VACATION_PAYROLL_DAYS = 20;
+/** Days he could be rostered, getDay() numbering. Tue–Sun: the venue is shut
+ *  Mondays, and no plan CSV has ever placed him on one. */
+export const DEFAULT_ELIGIBLE_WEEKDAYS = [0, 2, 3, 4, 5, 6];
+
+/**
+ * Everything the charge depends on, bundled — it travels together through every
+ * function here, and passing the parts separately is how call sites drift.
+ */
+export interface ChargeModel {
+  /** Average hours rostered per week (lib/vacationPay's buildRosterHours). */
+  weeklyHours: number;
+  /** Days you could be rostered, getDay() numbering — your hours spread over these. */
+  eligibleWeekdays: number[];
+  /** Flat hours one vacation day is paid at. */
+  dayHours: number;
+}
+
+type ChargeSettings = Pick<Settings, "vacationDayHours" | "vacationEligibleWeekdays">;
+
+/** Build the model from saved settings plus the observed roster. */
+export function chargeModel(settings: ChargeSettings, roster: RosterHours): ChargeModel {
+  return {
+    weeklyHours: roster.weeklyHours,
+    eligibleWeekdays: settings.vacationEligibleWeekdays,
+    dayHours: settings.vacationDayHours,
+  };
+}
+
+/** Hours one eligible day away costs: a week's hours split across the eligible days. */
+export function hoursPerEligibleDay(model: ChargeModel): number {
+  const n = new Set(model.eligibleWeekdays).size;
+  return n > 0 ? model.weeklyHours / n : 0;
+}
+
+/** Days in [from, to] you could have been rostered on. */
+export function eligibleDaysInRange(
+  fromIso: string,
+  toIso: string,
+  eligibleWeekdays: number[],
+): number {
+  if (!fromIso || !toIso || toIso < fromIso) return 0;
+  const set = new Set(eligibleWeekdays);
+  return eachDayOfInterval({ start: parseISO(fromIso), end: parseISO(toIso) }).filter((d) =>
+    set.has(getDay(d)),
+  ).length;
+}
+
+const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** getDay() numbers in the order a week is actually read: Monday first. */
+const MON_FIRST = [1, 2, 3, 4, 5, 6, 0];
+
+/** Human label for an eligible-weekday set, e.g. [0,2,3,4,5,6] -> "Tue–Sun". */
+export function describeEligibleWeekdays(weekdays: number[]): string {
+  const set = new Set(weekdays.filter((d) => d >= 0 && d <= 6));
+  if (set.size === 0) return "no days";
+  if (set.size === 7) return "every day";
+  const inOrder = MON_FIRST.filter((d) => set.has(d));
+  const idx = inOrder.map((d) => MON_FIRST.indexOf(d));
+  const contiguous = idx.every((v, i) => i === 0 || v === idx[i - 1] + 1);
+  if (contiguous && inOrder.length > 2) {
+    return WEEKDAY_SHORT[inOrder[0]] + "\u2013" + WEEKDAY_SHORT[inOrder[inOrder.length - 1]];
+  }
+  return inOrder.map((d) => WEEKDAY_SHORT[d]).join(", ");
+}
 
 const iso = (d: Date) => format(d, "yyyy-MM-dd");
 const daysBetween = (fromIso: string, toIso: string) =>
@@ -62,6 +136,8 @@ export interface MonthSegment {
   from: string; // ISO, first day of the segment
   to: string; // ISO, last day
   calendarDays: number;
+  /** Days in the segment you could have been rostered on. */
+  eligibleDays: number;
   /** Hours you'd have been rostered for — the quantity payroll actually charges. */
   missedHours: number;
   /** missedHours ÷ dayHours, before rounding. Shown so the number stays checkable. */
@@ -95,18 +171,20 @@ function monthSpans(fromIso: string, toIso: string): { month: string; from: stri
 export function chargeSegments(
   fromIso: string,
   toIso: string,
-  profile: WeekdayHours[],
-  dayHours: number,
+  model: ChargeModel,
 ): MonthSegment[] {
-  if (!(dayHours > 0)) return [];
+  if (!(model.dayHours > 0)) return [];
+  const perDay = hoursPerEligibleDay(model);
   return monthSpans(fromIso, toIso).map(({ month, from, to }) => {
-    const missedHours = expectedHoursInRange(from, to, profile);
-    const rawDays = missedHours / dayHours;
+    const eligibleDays = eligibleDaysInRange(from, to, model.eligibleWeekdays);
+    const missedHours = eligibleDays * perDay;
+    const rawDays = missedHours / model.dayHours;
     return {
       month,
       from,
       to,
       calendarDays: daysBetween(from, to),
+      eligibleDays,
       missedHours,
       rawDays,
       // max(0, …) also normalises ceil's -0 for a zero-hour segment.
@@ -117,6 +195,8 @@ export function chargeSegments(
 
 export interface VacationCharge {
   segments: MonthSegment[];
+  /** Days across the whole range you could have been rostered on. */
+  eligibleDays: number;
   /** Hours you'd have worked across the whole range. */
   missedHours: number;
   /** missedHours ÷ dayHours — the unrounded cost, so near-misses are visible. */
@@ -132,19 +212,19 @@ export interface VacationCharge {
 export function chargeVacation(
   fromIso: string,
   toIso: string,
-  profile: WeekdayHours[],
-  dayHours: number,
+  model: ChargeModel,
 ): VacationCharge {
-  const segments = chargeSegments(fromIso, toIso, profile, dayHours);
+  const segments = chargeSegments(fromIso, toIso, model);
   const missedHours = segments.reduce((s, x) => s + x.missedHours, 0);
   const days = segments.reduce((s, x) => s + x.days, 0);
   return {
     segments,
+    eligibleDays: segments.reduce((s, x) => s + x.eligibleDays, 0),
     missedHours,
-    rawDays: dayHours > 0 ? missedHours / dayHours : 0,
+    rawDays: model.dayHours > 0 ? missedHours / model.dayHours : 0,
     days,
-    paidHours: days * dayHours,
-    dayHours,
+    paidHours: days * model.dayHours,
+    dayHours: model.dayHours,
   };
 }
 
@@ -213,14 +293,13 @@ function applySnapshot(segments: MonthSegment[], snapshotDays: number): MonthSeg
  */
 export function allocateVacations(
   vacations: Vacation[],
-  profile: WeekdayHours[],
-  dayHours: number,
+  model: ChargeModel,
   entitlement: number,
   todayIso?: string,
 ): AllocatedSegment[] {
   const segments = vacations
     .flatMap((v) => {
-      const mine = chargeSegments(v.from, v.to, profile, dayHours);
+      const mine = chargeSegments(v.from, v.to, model);
       // Without a `todayIso` we can't tell what has already been paid, so a
       // snapshot — where one exists — always wins: the history-preserving answer
       // is the safe default for a caller that can't say when "now" is.
@@ -254,8 +333,7 @@ export function vacationBudgetUse(
   fromIso: string,
   toIso: string,
   others: Vacation[],
-  profile: WeekdayHours[],
-  dayHours: number,
+  model: ChargeModel,
   entitlement: number,
 ): BudgetUse {
   const year = fromIso.slice(0, 4);
@@ -267,7 +345,7 @@ export function vacationBudgetUse(
     scheduledCost: 0,
     createdAt: "",
   };
-  const all = allocateVacations([...others, candidate], profile, dayHours, entitlement);
+  const all = allocateVacations([...others, candidate], model, entitlement);
   const mine = all.filter((s) => s.vacationId === -1);
 
   const consumedBefore = all
@@ -295,11 +373,10 @@ export function vacationBudgetUse(
 export function payrollDaysTakenInYear(
   vacations: Vacation[],
   year: number,
-  profile: WeekdayHours[],
-  dayHours: number,
+  model: ChargeModel,
   todayIso?: string,
 ): number {
-  return allocateVacations(vacations, profile, dayHours, Number.POSITIVE_INFINITY, todayIso)
+  return allocateVacations(vacations, model, Number.POSITIVE_INFINITY, todayIso)
     .filter((s) => s.month.slice(0, 4) === String(year))
     .reduce((n, s) => n + s.days, 0);
 }
@@ -323,8 +400,8 @@ export interface MonthCheck {
   observedHours: number;
   predictedDays: number;
   predictedHours: number;
-  /** Calendar days of vacation the month contained. Zero = nothing to check against. */
-  calendarDays: number;
+  /** Eligible days of vacation the month contained. Zero = nothing to check against. */
+  eligibleDays: number;
   /** Weekly hours that would have produced the slip's hours exactly. */
   impliedWeeklyHours: number | null;
 }
@@ -346,32 +423,51 @@ export interface Calibration {
 
 const HOURS_EPSILON = 0.01;
 
-/** Vacation calendar days falling inside a "yyyy-MM" month, across all vacations. */
-function vacationDaysInMonth(month: string, vacations: Vacation[]): number {
+/** Eligible vacation days falling inside a "yyyy-MM" month, across all vacations. */
+function eligibleVacationDaysInMonth(
+  month: string,
+  vacations: Vacation[],
+  eligibleWeekdays: number[],
+): number {
   let n = 0;
   for (const v of vacations) {
     for (const s of monthSpans(v.from, v.to)) {
-      if (s.month === month) n += daysBetween(s.from, s.to);
+      if (s.month === month) n += eligibleDaysInRange(s.from, s.to, eligibleWeekdays);
     }
   }
   return n;
 }
 
+/**
+ * Check the model against the payslips.
+ *
+ * There is no hypothesis space to search — the mechanism is known — so the job is
+ * CALIBRATION: does the rule reproduce the day counts the slips charged, and if
+ * not, what weekly hours would have? That second number is the useful one, because
+ * it inverts the rule against reality:
+ *
+ *     observed hours = eligible days away x (weekly hours / eligible per week)
+ *  => weekly hours   = observed hours x eligible per week / eligible days away
+ *
+ * For August: 36 h x 6 / 7 = 30.9 h/week. Set beside what the shift log actually
+ * averages, that says whether the log is complete and current — which is the only
+ * input the estimate has.
+ */
 export function calibrateCharge(
   payslips: Payslip[],
   vacations: Vacation[],
-  profile: WeekdayHours[],
-  dayHours: number,
+  model: ChargeModel,
 ): Calibration {
   const slips = payslips
     .filter((p) => p.vacationDays != null)
     .sort((a, b) => a.month.localeCompare(b.month));
+  const perWeek = new Set(model.eligibleWeekdays).size;
 
   const checks: MonthCheck[] = slips.map((p) => {
-    const calendarDays = vacationDaysInMonth(p.month, vacations);
+    const eligibleDays = eligibleVacationDaysInMonth(p.month, vacations, model.eligibleWeekdays);
     const observedHours = p.vacationHours ?? 0;
     const predictedDays = vacations
-      .flatMap((v) => chargeSegments(v.from, v.to, profile, dayHours))
+      .flatMap((v) => chargeSegments(v.from, v.to, model))
       .filter((s) => s.month === p.month)
       .reduce((n, s) => n + s.days, 0);
     return {
@@ -379,10 +475,12 @@ export function calibrateCharge(
       observedDays: p.vacationDays as number,
       observedHours,
       predictedDays,
-      predictedHours: predictedDays * dayHours,
-      calendarDays,
+      predictedHours: predictedDays * model.dayHours,
+      eligibleDays,
       impliedWeeklyHours:
-        observedHours > 0 && calendarDays > 0 ? (observedHours * 7) / calendarDays : null,
+        observedHours > 0 && eligibleDays > 0 && perWeek > 0
+          ? (observedHours * perWeek) / eligibleDays
+          : null,
     };
   });
 
@@ -392,7 +490,7 @@ export function calibrateCharge(
   const dayHoursConflict =
     perDay.length > 0 && perDay.some((h) => Math.abs(h - perDay[0]) > HOURS_EPSILON);
 
-  const usableChecks = checks.filter((c) => c.calendarDays > 0);
+  const usableChecks = checks.filter((c) => c.eligibleDays > 0);
   const implied = usableChecks
     .map((c) => c.impliedWeeklyHours)
     .filter((h): h is number => h != null);
@@ -405,7 +503,7 @@ export function calibrateCharge(
     matches: usableChecks.every((c) => c.predictedDays === c.observedDays),
     dayHours: perDay.length === 0 || dayHoursConflict ? null : perDay[0],
     dayHoursConflict,
-    weeklyHours: avgWeeklyHours(profile),
+    weeklyHours: model.weeklyHours,
     impliedWeeklyHours:
       implied.length > 0 ? implied.reduce((a, b) => a + b, 0) / implied.length : null,
   };
@@ -414,12 +512,13 @@ export function calibrateCharge(
 /** Where the model stands, in words a person would use. */
 export function describeCalibration(cal: Calibration): string {
   if (cal.usable === 0) return "Not checked against a payslip yet.";
-  const slips = `${cal.usable} payslip${cal.usable === 1 ? "" : "s"}`;
+  const slips = cal.usable + " payslip" + (cal.usable === 1 ? "" : "s");
   if (!cal.matches) {
-    const c = cal.checks.find((x) => x.calendarDays > 0 && x.predictedDays !== x.observedDays);
+    const c = cal.checks.find((x) => x.eligibleDays > 0 && x.predictedDays !== x.observedDays);
     return c
-      ? `Your ${c.month} payslip charged ${c.observedDays} days; this estimate says ${c.predictedDays} — your typical hours have probably shifted since.`
-      : `Doesn't match your ${slips}.`;
+      ? "Your " + c.month + " payslip charged " + c.observedDays + " days; this estimate says " +
+        c.predictedDays + " — your logged hours per week are probably off."
+      : "Doesn't match your " + slips + ".";
   }
-  return `Matches ${slips}.`;
+  return "Matches " + slips + ".";
 }

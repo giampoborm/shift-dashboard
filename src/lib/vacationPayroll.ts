@@ -1,10 +1,11 @@
 // PRICING a vacation: turning the charged days from lib/vacationCharge.ts into
 // euros, and deferring to the payslip once one exists.
 //
-// The COUNTING lives next door in vacationCharge.ts (hours you'd have worked ÷ the
-// flat 6 h day, rounded up per month). This module only answers "and what does
-// that pay". Split that way because counting is roster maths and pricing is rate
-// -table maths, and mixing them is what made the old module hard to follow.
+// The COUNTING lives next door in vacationCharge.ts (weekly hours spread over the
+// days you could be rostered, times the eligible days away, ÷ the flat 6 h day,
+// rounded up per month). This module only answers "and what does that pay". Split
+// that way because counting is roster maths and pricing is rate-table maths, and
+// mixing them is what made the old module hard to follow.
 //
 // Grounded in Entgeltabrechnung 8/2026 (vacation Mon 3 Aug – Tue 11 Aug):
 //   Lohnart 171  Urlaub                 36,00 STD x 15,50 = 558,00
@@ -21,23 +22,25 @@
 import { eachDayOfInterval, format, parseISO } from "date-fns";
 import type { GrossRate, Payslip, Settings, Vacation } from "./types";
 import { netFactorForMonth, rateForDate } from "./earnings";
-import { expectedHoursInRange, type WeekdayHours } from "./vacationPay";
 import {
   allocateVacations,
   chargeVacation,
+  eligibleDaysInRange,
   type AllocatedSegment,
+  type ChargeModel,
   type VacationCharge,
 } from "./vacationCharge";
 
-export type PayrollSettings = Pick<Settings, "vacationDayHours" | "vacationPayrollDays">;
+export type PayrollSettings = Pick<Settings, "vacationPayrollDays">;
 
 /**
  * EVERY calendar day covered by the given vacations.
  *
  * This is the set to erase from the roster observation window (see vacationPay.ts)
- * and the set of days you are unavailable to work. It is deliberately the whole
- * range: the charge is an hours total, not a list of billed dates, so there is no
- * such thing as "a day inside the vacation that doesn't count".
+ * and the set of days you are unavailable to work. Deliberately the WHOLE range,
+ * eligible or not: you were away on the Mondays too, so a shift rostered then
+ * isn't happening either, and leaving them in the window would drag the weekly
+ * hours the next holiday is costed from.
  */
 export function vacationCalendarDates(vacations: Vacation[]): Set<string> {
   const out = new Set<string>();
@@ -67,16 +70,15 @@ export interface VacationPayrollPay extends VacationCharge {
 export function vacationPayrollPay(
   fromIso: string,
   toIso: string,
-  profile: WeekdayHours[],
-  settings: PayrollSettings,
+  model: ChargeModel,
   rates: GrossRate[],
   payslips: Payslip[],
 ): VacationPayrollPay {
-  const charge = chargeVacation(fromIso, toIso, profile, settings.vacationDayHours);
+  const charge = chargeVacation(fromIso, toIso, model);
   let gross = 0;
   let net = 0;
   for (const seg of charge.segments) {
-    const segGross = seg.days * settings.vacationDayHours * (rateForDate(seg.from, rates) ?? 0);
+    const segGross = seg.days * model.dayHours * (rateForDate(seg.from, rates) ?? 0);
     const { factor } = netFactorForMonth(seg.month, payslips);
     gross += segGross;
     net += segGross * (factor ?? 1);
@@ -110,7 +112,7 @@ export interface VacationCost {
  */
 export function vacationCosts(
   vacations: Vacation[],
-  profile: WeekdayHours[],
+  model: ChargeModel,
   settings: PayrollSettings,
   rates: GrossRate[],
   payslips: Payslip[],
@@ -119,8 +121,7 @@ export function vacationCosts(
   const out = new Map<number, VacationCost>();
   const allocated = allocateVacations(
     vacations,
-    profile,
-    settings.vacationDayHours,
+    model,
     settings.vacationPayrollDays,
     todayIso,
   );
@@ -131,7 +132,7 @@ export function vacationCosts(
     let gross = 0;
     let net = 0;
     for (const seg of mine) {
-      const segGross = seg.paidDays * settings.vacationDayHours * (rateForDate(seg.from, rates) ?? 0);
+      const segGross = seg.paidDays * model.dayHours * (rateForDate(seg.from, rates) ?? 0);
       const { factor } = netFactorForMonth(seg.month, payslips);
       gross += segGross;
       net += segGross * (factor ?? 1);
@@ -143,7 +144,7 @@ export function vacationCosts(
       days,
       paidDays,
       unpaidDays: days - paidDays,
-      hours: paidDays * settings.vacationDayHours,
+      hours: paidDays * model.dayHours,
       gross,
       net,
     });
@@ -184,17 +185,13 @@ export interface MonthVacationPay {
 export function segmentsInMonth(
   month: string,
   vacations: Vacation[],
-  profile: WeekdayHours[],
+  model: ChargeModel,
   settings: PayrollSettings,
   todayIso?: string,
 ): AllocatedSegment[] {
-  return allocateVacations(
-    vacations,
-    profile,
-    settings.vacationDayHours,
-    settings.vacationPayrollDays,
-    todayIso,
-  ).filter((s) => s.month === month);
+  return allocateVacations(vacations, model, settings.vacationPayrollDays, todayIso).filter(
+    (s) => s.month === month,
+  );
 }
 
 /**
@@ -207,22 +204,22 @@ export function segmentsInMonth(
  * Never re-derive a figure you have already been handed — that is what stops a
  * later change to the roster (and so to the estimate) from rewriting a paid month.
  *
- * The banked/projected split is by HOURS, not by dates: the charge has no billed
- * dates to sort into past and future, so a segment straddling today is divided in
- * the proportion of its expected hours that have already gone by. The month total
+ * The banked/projected split is by ELIGIBLE DAYS, not by dates: the charge has no
+ * billed dates to sort into past and future, so a segment straddling today is
+ * divided in the proportion of its eligible days already gone by. The month total
  * is unaffected either way.
  */
 export function vacationPayForMonth(
   month: string,
   vacations: Vacation[],
-  profile: WeekdayHours[],
+  model: ChargeModel,
   settings: PayrollSettings,
   rates: GrossRate[],
   payslips: Payslip[],
   todayIso: string,
 ): MonthVacationPay {
   const { factor } = netFactorForMonth(month, payslips);
-  const segments = segmentsInMonth(month, vacations, profile, settings, todayIso);
+  const segments = segmentsInMonth(month, vacations, model, settings, todayIso);
   const observed = observedVacationForMonth(month, payslips);
 
   if (observed) {
@@ -249,15 +246,17 @@ export function vacationPayForMonth(
 
   for (const seg of segments) {
     // Only entitlement-covered days earn anything; the rest is unpaid leave.
-    const gross = seg.paidDays * settings.vacationDayHours * (rateForDate(seg.from, rates) ?? 0);
+    const gross = seg.paidDays * model.dayHours * (rateForDate(seg.from, rates) ?? 0);
     const net = gross * (factor ?? 1);
+    // Split by ELIGIBLE DAYS elapsed: the charge has no billed dates to sort into
+    // past and future, and eligible days are the units it is actually built from.
     const pastShare =
       seg.to <= todayIso
         ? 1
         : seg.from > todayIso
           ? 0
-          : seg.missedHours > 0
-            ? expectedHoursInRange(seg.from, todayIso, profile) / seg.missedHours
+          : seg.eligibleDays > 0
+            ? eligibleDaysInRange(seg.from, todayIso, model.eligibleWeekdays) / seg.eligibleDays
             : 0;
     banked.days += seg.paidDays * pastShare;
     banked.gross += gross * pastShare;
@@ -269,7 +268,7 @@ export function vacationPayForMonth(
 
   return {
     days: segments.reduce((n, s) => n + s.days, 0),
-    hours: segments.reduce((n, s) => n + s.paidDays, 0) * settings.vacationDayHours,
+    hours: segments.reduce((n, s) => n + s.paidDays, 0) * model.dayHours,
     unpaidDays: segments.reduce((n, s) => n + s.unpaidDays, 0),
     banked,
     projected,

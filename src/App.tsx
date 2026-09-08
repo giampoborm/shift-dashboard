@@ -11,7 +11,8 @@ import { shiftsToCsv, downloadText } from "./lib/exportCsv";
 import { estimateShift, sumEstimates, type Range } from "./lib/estimates";
 import { nextShiftFrom, shiftsInMonth } from "./lib/period";
 import { segmentsInMonth, vacationCalendarDates, vacationPayForMonth } from "./lib/vacationPayroll";
-import { buildWeekdayHoursProfile } from "./lib/vacationPay";
+import { buildRosterHours } from "./lib/vacationPay";
+import { chargeModel } from "./lib/vacationCharge";
 import { reconcileMonth } from "./lib/reconcile";
 import { consumeAuthRedirect, isConfigured, sync, syncOnOpen } from "./lib/driveSync";
 import { ShiftEditor, type EditorPrefill } from "./components/ShiftEditor";
@@ -367,13 +368,14 @@ function Home(props: {
 
   const todayIso = format(new Date(), "yyyy-MM-dd");
 
-  // Roster hours per weekday — the input the payroll vacation charge is computed
-  // from (hours you'd have worked / the flat 6 h day). Days already spent on
-  // vacation are erased from the window so time off can't shrink the estimate of a
+  // Weekly rostered hours + the eligible weekdays they spread over — the whole
+  // input to the payroll vacation charge. Days already spent on vacation are
+  // erased from the observation window so time off can't shrink the estimate of a
   // typical week. See lib/vacationCharge.ts.
-  const hoursProfile = useMemo(
-    () => buildWeekdayHoursProfile(allShifts, vacationCalendarDates(vacations ?? [])),
-    [allShifts, vacations],
+  const vacModel = useMemo(
+    () =>
+      chargeModel(settings, buildRosterHours(allShifts, vacationCalendarDates(vacations ?? []))),
+    [allShifts, vacations, settings],
   );
 
   // Paid vacation landing in the viewed month.
@@ -382,13 +384,13 @@ function Home(props: {
       vacationPayForMonth(
         format(cursor, "yyyy-MM"),
         vacations ?? [],
-        hoursProfile,
+        vacModel,
         settings,
         rates,
         payslips,
         todayIso,
       ),
-    [cursor, vacations, hoursProfile, settings, rates, payslips, todayIso],
+    [cursor, vacations, vacModel, settings, rates, payslips, todayIso],
   );
 
   // Logged-vs-payslip check for the viewed month; drives the "!" on the salary card.
@@ -409,13 +411,13 @@ function Home(props: {
         // Deliberately WITHOUT todayIso: this is the model's own prediction, and
         // letting it fall back to the saved snapshot would have it agree with the
         // slip by construction — the drift it exists to catch would never show.
-        expectedDays: segmentsInMonth(m, vacations ?? [], hoursProfile, settings).reduce(
+        expectedDays: segmentsInMonth(m, vacations ?? [], vacModel, settings).reduce(
           (n, s) => n + s.days,
           0,
         ),
       });
     },
-    [allShifts, cursor, rates, payslips, vacationPay, vacations, hoursProfile, settings],
+    [allShifts, cursor, rates, payslips, vacationPay, vacations, vacModel, settings],
   );
 
   const month = useMemo(() => {

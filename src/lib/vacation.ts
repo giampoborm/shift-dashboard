@@ -4,11 +4,11 @@
 // different units:
 //
 //  0. Payroll (what HR actually deducts) — the headline, and the only one that is
-//     auditable against a payslip: the HOURS you'd have worked in the range ÷ the
-//     flat 6 h a vacation day is paid at, rounded up, against a 20-day
-//     entitlement. That is why four ~7 h shifts a week cost ~4.7 days, not 4.
-//     The mechanism and its evidence live in vacationCharge.ts; the pricing in
-//     vacationPayroll.ts.
+//     auditable against a payslip: your weekly hours spread over the days you're
+//     eligible to work, times the eligible days you're away, ÷ the flat 6 h a
+//     vacation day is paid at, rounded up, against a 20-day entitlement. That is
+//     why a ~28 h week costs ~4.7 days, not the 4 shifts you'd miss. The mechanism
+//     and its evidence live in vacationCharge.ts; the pricing in vacationPayroll.ts.
 //  1. Werktage (legal/contract count) — deterministic: Mon–Sat in the range, minus
 //     Berlin public holidays, against the 24 of contract §8. Paperwork, not pay.
 //
@@ -28,14 +28,8 @@
 import Holidays from "date-holidays";
 import { eachDayOfInterval, format, getDay, parseISO } from "date-fns";
 import type { Shift } from "./types";
-import {
-  avgWeeklyHours,
-  avgWorkingDaysPerWeek,
-  buildWeekdayHoursProfile,
-  buildWeekdayProfile,
-  estimateScheduledCost,
-} from "./vacationPay";
-import { chargeVacation } from "./vacationCharge";
+import { avgWorkingDaysPerWeek, buildWeekdayProfile, estimateScheduledCost } from "./vacationPay";
+import { chargeVacation, type ChargeModel } from "./vacationCharge";
 
 export * from "./vacationPay";
 export * from "./vacationCharge";
@@ -98,8 +92,8 @@ export interface VacationCalc {
 }
 
 export interface VacationCalcOptions {
-  /** Flat hours one vacation day is paid at. */
-  dayHours: number;
+  /** Weekly hours, eligible weekdays and the flat vacation day — see vacationCharge. */
+  model: ChargeModel;
   /** Days already spent on vacation — removed from the roster observation window
    *  so past time off can't shrink the estimate of a typical week. */
   vacationDates?: Set<string>;
@@ -113,22 +107,21 @@ export function calcVacation(
   history: Shift[],
   opts: VacationCalcOptions,
 ): VacationCalc {
-  const { dayHours, vacationDates } = opts;
+  const { model, vacationDates } = opts;
   const holidays = berlinHolidays(fromIso, toIso);
   const holidaySet = new Set(holidays.map((h) => h.date));
   const calendarDays =
     toIso < fromIso
       ? 0
       : eachDayOfInterval({ start: parseISO(fromIso), end: parseISO(toIso) }).length;
-  const hoursProfile = buildWeekdayHoursProfile(history, vacationDates);
   return {
     calendarDays,
-    charge: chargeVacation(fromIso, toIso, hoursProfile, dayHours),
+    charge: chargeVacation(fromIso, toIso, model),
     werktage: countWerktage(fromIso, toIso, holidaySet, true),
     arbeitstage: countWerktage(fromIso, toIso, holidaySet, false),
     holidays,
     scheduleCost: estimateScheduledCost(fromIso, toIso, buildWeekdayProfile(history, vacationDates)),
     daysPerWeek: avgWorkingDaysPerWeek(history, vacationDates),
-    weeklyHours: avgWeeklyHours(hoursProfile),
+    weeklyHours: model.weeklyHours,
   };
 }

@@ -189,66 +189,68 @@ at different altitudes recurs throughout.
   **Now / Doing → Still open**). Structure/IA is resolved and shipped; Home is done.
 - Vacation entitlement counting basis still TBC with employer — see [[vacation-entitlement]].
 
-### ✅ Superseded: the payroll vacation counting rule is HOURS, not weekdays (2026-09-07)
+### ✅ Resolved: how payroll really charges a vacation (2026-09-07)
 
-**The weekday rule was wrong, and the user caught it.** The app used to charge a
-vacation day for every **Tue–Sat** in the range. That reproduced the 8/2026 payslip's
-6 days for 3–11 Aug, but by coincidence of arithmetic, not by mechanism — and it broke
-in two visible ways:
+Took three models to get right. The user caught both wrong ones, and each failure is
+worth keeping because they fail in opposite directions.
 
-- It asserted Mondays and Sundays are *never* charged. They aren't special; they're
-  just days he rarely works. Ticking "Sunday" in Settings to reflect that he *is*
-  available conjured an extra **paid** vacation day into the calendar out of nothing.
-- It could only ever reproduce the day count. The 36,00 STD on the slip came out right
-  only because 6 × 6 h happened to match.
+**The rule**, confirmed with his manager:
 
-**The real mechanism**, confirmed with his manager:
+```
+hours per eligible day = weekly hours ÷ eligible days per week     # 28 ÷ 6 = 4.67 h
+missed hours           = eligible days inside the range × that
+days charged           = ceil( missed hours ÷ 6 h )                # per MONTH segment
+```
 
-> **hours you would have worked ÷ 6 h (the flat vacation day), rounded UP.**
+Mon 3 – Tue 11 Aug: 7 eligible days away (both Mondays skipped, venue shut) × 4.67 h
+= 32.7 h → 5.44 → **6 days / 36,00 h**. Both numbers on the 8/2026 payslip, out of one
+quantity. A vacation day is worth a flat 6 h but he works ~28 h a week, so a week off
+is 4.67 days — **not** one per day away, and **not** one per shift missed.
 
-A vacation day is worth 6 h, but his shifts run ~7 h and he works ~4 a week, so a week
-away is ~28 h = **4.67 vacation days, not 4**. Mon 3 – Tue 11 Aug is a full week plus a
-Tuesday ≈ 35 h → 5.83 → **6 days = 36,00 h**, both numbers off one quantity. It also
-explains why the 3–9 Aug roster listed him on **zero** days: payroll charges a *typical*
-week, not the (deliberately emptied) actual roster — which is why the estimate is built
-from historical weekday hours and never from the planned shifts inside the range.
+**Model 1 — one day per Tue–Sat calendar weekday.** Reproduced the August slip by
+coincidence of arithmetic. It treated *availability* as cost: ticking "Sunday" in
+Settings to say he is Sunday-available invented an extra **paid** vacation day. It
+could also only ever reproduce the day count — 36,00 STD came out right only because
+6 × 6 happened to match.
 
-Settled with the user when reworking it: baseline = **historical average** (self-updating,
-no new setting), rounding = **always up**, and the third "Proportional (your shifts)"
-budget bar is **gone** — under the hours model the payroll basis *is* roster-derived, so
-it was a redundant restatement.
+**Model 2 — hours from a per-weekday historical profile.** Right mechanism, wrong
+input. On an irregular roster a weekday he is only sometimes on scores near zero, so
+the Tuesday he came back on contributed almost nothing and the same range came out at
+30 h / 5 days. Visible on Home as "5 vacation days · 30 h" against the payslip's 6/36.
+
+**Model 3 — eligible days.** Weekly hours spread evenly over the days he *could* be
+rostered. The eligible count appears in the numerator **and** the denominator, so
+widening it barely moves a total — 5, 6 or 7 eligible days/week all charge 6 for the
+August range — it only fixes how a part-week at either end is counted. That
+self-correction is what makes the setting safe to expose, and it is why the setting
+means "days you could be rostered", never "days payroll charges".
 
 ### 🧪 What that changed in the code
 
-- **New `src/lib/vacationCharge.ts`** — the whole counting model: month segmentation
-  (each payslip rounds up on its own), the finite-entitlement allocation, and
-  calibration. `allocateVacations` is the **single primitive** every downstream number
-  derives from (month projection, yearly balance, planner card, paid/unpaid split), so
-  they can't drift apart.
-- **New hours side of the roster** in `vacationPay.ts`: `buildWeekdayHoursProfile` /
-  `expectedHoursInRange` / `avgWeeklyHours`. Per-weekday, not a flat weekly average, so
-  a weekend break costs his weekend hours rather than 2/7ths of the week.
-- **`vacationPayroll.ts` is now pricing only** — euros, and deferring to the payslip
-  once one exists. Counting is roster maths, pricing is rate-table maths; mixing them is
-  what made the old module hard to follow.
-- **Deleted:** `vacationRuleFit.ts` (a hypothesis space of 10 weekday rules — there is
-  no space to search once the mechanism is known) and `vacationBudget.ts` (its
-  date-level entitlement split has no dates to work with any more). The
-  chargeable-weekday **Settings checkbox set is gone**, along with `Settings.vacationChargeableWeekdays`.
-- **Calibration replaced fitting.** Every payslip is still a labelled example, but the
-  question is now *"does hours ÷ 6 reproduce what the slip charged, and if not, what
-  weekly hours would have?"*. `calibrateCharge` answers both; Settings and the planner
-  show `~28 h/week ÷ 6 h`, whether it matches the slips, and the weekly hours the slips
-  themselves imply.
-- **Estimate forward, observe backward** survives unchanged: `vacationPayForMonth`
-  prefers the slip's own figures whenever it has them, and a finished vacation keeps the
-  `payrollDays` snapshot it was saved with (now alongside `payrollHours`).
-- **Calendar no longer colours individual "charged" days.** There are none — the charge
-  is a monthly hours total. Every day of a vacation reads the same, with the range's
-  real cost and net pay in the tooltip. That per-day paid/free split was the artefact
-  that made the Sunday bug visible.
+- **`src/lib/vacationCharge.ts`** owns the model: `ChargeModel` (weekly hours +
+  eligible weekdays + the flat day) travels as one value, because passing the parts
+  separately is how call sites drift. `allocateVacations` is the **single primitive**
+  every downstream number derives from — month projection, yearly balance, planner
+  card, paid/unpaid split — so they cannot disagree.
+- **`vacationPay.ts`** returns ONE number, `buildRosterHours().weeklyHours`. The
+  per-weekday hours profile is gone: it was actively harmful (model 2).
+- **`vacationPayroll.ts` is pricing only** — euros, plus payslip precedence.
+- **Precedence is payslip → saved snapshot → model**, encoded in `allocateVacations`
+  itself rather than in each caller. That fixed Home re-estimating an August that
+  three other surfaces already showed correctly.
+- **Deleted for good:** `vacationRuleFit.ts` (a hypothesis space of 10 weekday rules)
+  and `vacationBudget.ts` (date-level entitlement splitting — there are no billed
+  dates). `Settings.vacationChargeableWeekdays` → `vacationEligibleWeekdays`, with
+  the opposite meaning.
+- **Calibration, not fitting.** Every payslip is still a labelled example, but the
+  question is now "does the model reproduce the day count, and if not what weekly
+  hours would have?" — inverted as `observed hours × eligible per week ÷ eligible
+  days away`. Settings and the planner show that beside the logged average, so a
+  patchy shift log is visible rather than silently skewing estimates.
+- **The derivation is printed on screen**, every step, because "6 days" is
+  unfalsifiable on its own and this number has now been wrong twice.
 
-**Deliberately out of scope:** public-holiday handling. Under the hours model a holiday
+**Deliberately out of scope:** public-holiday handling. Under this model a holiday
 inside a vacation only matters if he'd have been rostered then, and no recorded range
 contains one to check against.
 

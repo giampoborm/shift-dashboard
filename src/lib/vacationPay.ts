@@ -7,9 +7,10 @@
 // It serves two consumers with different questions:
 //   * "how many SHIFTS would I miss" — buildWeekdayProfile / estimateScheduledCost.
 //     Opportunity cost: those shifts' tips are gone and nothing replaces them.
-//   * "how many HOURS would I miss" — buildWeekdayHoursProfile / expectedHoursInRange.
-//     This is the input payroll charges against: hours ÷ the flat 6 h vacation day,
-//     rounded up. See lib/vacationCharge.ts.
+//   * "how many HOURS a week do I work" — buildRosterHours. One TOTAL, deliberately
+//     not a per-weekday breakdown: payroll spreads your weekly hours evenly over the
+//     days you're eligible to work, so which weekdays you happened to be rostered on
+//     is not part of the charge. See lib/vacationCharge.ts.
 // Those are different numbers on purpose — a ~7 h shift is more than one 6 h
 // vacation day — and conflating them is the bug this module was reworked to fix.
 //
@@ -133,83 +134,56 @@ export function estimateScheduledCost(
 }
 
 // ---------------------------------------------------------------------------
-// HOURS side of the roster — the input the payroll charge is actually computed
-// from (see lib/vacationCharge.ts).
+// HOURS side of the roster — the input the payroll charge is computed from
+// (see lib/vacationCharge.ts).
 //
-// The employer does not count your days off. It counts the HOURS you would have
-// worked and divides them by the flat 6 h a vacation day is paid at. That is why
-// four ~7 h shifts a week cost more than four vacation days: 28 h / 6 = 4.67.
+// ONE NUMBER: hours per week. Payroll doesn't ask which weekdays you work; it
+// spreads your weekly hours across the days you're eligible for and charges the
+// eligible days you were away. So a per-weekday hours profile — which this module
+// used to build — actively harmed the estimate: on an irregular roster, a weekday
+// you're only sometimes on came out near zero, and a vacation ending on such a day
+// lost the hours that day really represents. That is exactly how Mon 3 – Tue 11
+// Aug came out at 30 h / 5 days instead of the 36 h / 6 days payroll charged.
 // ---------------------------------------------------------------------------
 
-/** Hours one rostered shift represents, falling back to the roster mean when the
- *  shift has no logged hours (typical of a sick day, which is rostered all the
- *  same). A shift with no hours at all would otherwise read as a free day. */
-function shiftHoursWithFallback(s: Shift, mean: number): number {
-  return s.actualHours != null && s.actualHours > 0 ? s.actualHours : mean;
+export interface RosterHours {
+  /** Average hours rostered per week — the figure the charge is derived from. */
+  weeklyHours: number;
+  /** Total rostered hours observed. */
+  hours: number;
+  /** Weeks of observation window, vacations removed. */
+  weeks: number;
+  /** Rostered days behind it (sample size). */
+  days: number;
 }
 
-export interface WeekdayHours {
-  /** Expected hours rostered on that weekday — Σ hours ÷ times the weekday occurred. */
-  hours: number;
-  /** Distinct dates observed on that weekday (sample size). */
-  n: number;
-}
+const EMPTY_ROSTER: RosterHours = { weeklyHours: 0, hours: 0, weeks: 0, days: 0 };
 
 /**
- * Per-weekday expected ROSTERED HOURS, from the same window and the same
- * worked+sick definition as buildWeekdayProfile. Vacation dates are erased from
- * both the numerator and the denominator, so a holiday can't read as "he works
- * fewer hours" and quietly shrink what the next one costs.
+ * Weekly rostered hours from history (worked + sick), with vacation days removed
+ * from BOTH the hours and the observation window — otherwise every holiday you
+ * take reads as "he works fewer hours" and quietly shrinks what the next one costs.
  *
- * Per weekday rather than a flat weekly average because a range is rarely a whole
- * number of weeks: a Sat–Sun break should cost his weekend hours, not 2/7ths of
- * the week. Summed over a full week it is exactly the weekly average, so the two
- * views never disagree.
+ * A rostered shift with no logged hours (typical of a sick day) is counted at the
+ * mean of the shifts that do have them, rather than as a free day.
  */
-export function buildWeekdayHoursProfile(
-  history: Shift[],
-  vacationDates?: Set<string>,
-): WeekdayHours[] {
-  const blank: WeekdayHours[] = Array.from({ length: 7 }, () => ({ hours: 0, n: 0 }));
+export function buildRosterHours(history: Shift[], vacationDates?: Set<string>): RosterHours {
   const ws = withoutDates(history.filter(wasRostered), vacationDates);
-  if (ws.length === 0) return blank;
+  if (ws.length === 0) return EMPTY_ROSTER;
 
   const known = ws.map((s) => s.actualHours).filter((h): h is number => h != null && h > 0);
   const mean = known.length > 0 ? known.reduce((a, b) => a + b, 0) / known.length : 0;
+  const hours = ws.reduce((sum, s) => sum + (s.actualHours && s.actualHours > 0 ? s.actualHours : mean), 0);
 
   const dates = ws.map((s) => s.date).sort();
   const minIso = dates[0];
   const maxIso = dates[dates.length - 1];
-
-  for (let wd = 0; wd < 7; wd++) {
-    const onDay = ws.filter((s) => getDay(parseISO(s.date)) === wd);
-    const occ = countWeekdayOccurrences(minIso, maxIso, wd, vacationDates);
-    const total = onDay.reduce((sum, s) => sum + shiftHoursWithFallback(s, mean), 0);
-    blank[wd] = { hours: occ > 0 ? total / occ : 0, n: new Set(onDay.map((s) => s.date)).size };
+  let spanDays = (parseISO(maxIso).getTime() - parseISO(minIso).getTime()) / 86_400_000 + 1;
+  if (vacationDates) {
+    for (const d of vacationDates) if (d >= minIso && d <= maxIso) spanDays -= 1;
   }
-  return blank;
-}
+  if (spanDays <= 0) return EMPTY_ROSTER;
 
-/** Expected hours in a typical week — the sum of the per-weekday expectations. */
-export function avgWeeklyHours(profile: WeekdayHours[]): number {
-  return profile.reduce((sum, d) => sum + d.hours, 0);
-}
-
-/** Total sample size behind an hours profile — how many rostered days it saw. */
-export function hoursProfileSample(profile: WeekdayHours[]): number {
-  return profile.reduce((sum, d) => sum + d.n, 0);
-}
-
-/** Hours you'd have been rostered for across [fromIso, toIso], inclusive. */
-export function expectedHoursInRange(
-  fromIso: string,
-  toIso: string,
-  profile: WeekdayHours[],
-): number {
-  if (!fromIso || !toIso || toIso < fromIso) return 0;
-  let hours = 0;
-  for (const d of eachDayOfInterval({ start: parseISO(fromIso), end: parseISO(toIso) })) {
-    hours += profile[getDay(d)].hours;
-  }
-  return hours;
+  const weeks = spanDays / 7;
+  return { weeklyHours: hours / weeks, hours, weeks, days: new Set(dates).size };
 }

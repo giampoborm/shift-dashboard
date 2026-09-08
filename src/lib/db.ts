@@ -3,7 +3,11 @@
 
 import Dexie, { type Table } from "dexie";
 import type { GrossRate, Payslip, Settings, Shift, Vacation } from "./types";
-import { DEFAULT_VACATION_DAY_HOURS, DEFAULT_VACATION_PAYROLL_DAYS } from "./vacationCharge";
+import {
+  DEFAULT_ELIGIBLE_WEEKDAYS,
+  DEFAULT_VACATION_DAY_HOURS,
+  DEFAULT_VACATION_PAYROLL_DAYS,
+} from "./vacationCharge";
 
 export const DEFAULT_SETTINGS: Settings = {
   id: 1,
@@ -17,6 +21,8 @@ export const DEFAULT_SETTINGS: Settings = {
   // records its vacation figures.
   vacationPayrollDays: DEFAULT_VACATION_PAYROLL_DAYS, // "Tage LJ alt" = 20
   vacationDayHours: DEFAULT_VACATION_DAY_HOURS, // Urlaub 36,00 STD ÷ 6,00 Tage
+  // Tue–Sun: the venue is shut Mondays, so his weekly hours spread over 6 days.
+  vacationEligibleWeekdays: DEFAULT_ELIGIBLE_WEEKDAYS,
   recencyHalfLifeDays: 45, // recent shifts dominate tip estimates; old data fades, never deleted
 };
 

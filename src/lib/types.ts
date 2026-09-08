@@ -110,6 +110,13 @@ export interface Settings {
    *  Everything hangs off this: a day off costs (hours you'd have worked) ÷ this,
    *  rounded up — which is why a ~7 h shift costs more than one vacation day. */
   vacationDayHours: number;
+  /** Days you could be ROSTERED on, getDay() numbering (0=Sun … 6=Sat). Your weekly
+   *  hours are spread evenly across these, and every eligible day inside a vacation
+   *  carries its share — see lib/vacationCharge.ts.
+   *  ⚠ NOT "which weekdays payroll charges". An earlier model read it that way and
+   *  ticking Sunday invented a paid vacation day; here the count sits in both the
+   *  numerator and the denominator, so widening it barely moves the total. */
+  vacationEligibleWeekdays: number[];
   recencyHalfLifeDays: number; // tip-estimate recency half-life in days (0 = weight all history equally)
 }
 

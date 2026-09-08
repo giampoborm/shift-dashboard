@@ -18,7 +18,8 @@ import { computeShiftEarnings, isPaidShift } from "../lib/earnings";
 import { estimateShift } from "../lib/estimates";
 // Imported from the dep-free vacation modules, NOT the lib/vacation barrel: that
 // one pulls in date-holidays, which must stay behind VacationPlanner's lazy load.
-import { buildWeekdayHoursProfile } from "../lib/vacationPay";
+import { buildRosterHours } from "../lib/vacationPay";
+import { chargeModel } from "../lib/vacationCharge";
 import { vacationCalendarDates, vacationCosts } from "../lib/vacationPayroll";
 import { formatDate } from "../lib/format";
 import type { GrossRate, Payslip, Settings, Shift, Vacation } from "../lib/types";
@@ -87,7 +88,7 @@ export function Calendar(props: {
     () =>
       vacationCosts(
         vacations ?? [],
-        buildWeekdayHoursProfile(shifts, vacationCalendarDates(vacations ?? [])),
+        chargeModel(settings, buildRosterHours(shifts, vacationCalendarDates(vacations ?? []))),
         settings,
         rates,
         payslips,
@@ -182,7 +183,7 @@ export function Calendar(props: {
         })}
       </div>
       <p className="muted" style={{ fontSize: "0.76rem" }}>
-        Solid chip = worked · outlined = planned · struck = swapped · dashed amber = sick (paid, no tips). Day total = take-home (worked actuals, else estimated median); <em>tips</em> is the tip slice of it. A vacation is charged as a whole range — the hours you'd have worked ÷ a flat {settings.vacationDayHours} h day, rounded up — so no single day in it is "the charged one"; hover a vacation for what the range costs.
+        Solid chip = worked · outlined = planned · struck = swapped · dashed amber = sick (paid, no tips). Day total = take-home (worked actuals, else estimated median); <em>tips</em> is the tip slice of it. A vacation is charged as a whole range — your weekly hours spread over the days you could be rostered, times the eligible days away, ÷ a flat {settings.vacationDayHours} h day and rounded up — so no single day in it is "the charged one"; hover a vacation for what the range costs.
       </p>
     </div>
   );

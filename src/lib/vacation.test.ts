@@ -9,6 +9,10 @@ import {
   vacationCalendarDates,
 } from "./vacation";
 import type { Shift } from "./types";
+import type { ChargeModel } from "./vacationCharge";
+
+/** 28 h a week spread over Tue–Sun (the venue is shut Mondays). */
+const MODEL: ChargeModel = { weeklyHours: 28, eligibleWeekdays: [0, 2, 3, 4, 5, 6], dayHours: 6 };
 
 function shift(date: string, crossesMidnight = false, status: Shift["status"] = "worked"): Shift {
   return {
@@ -131,7 +135,7 @@ describe("roster frequency", () => {
 describe("calcVacation", () => {
   it("produces a coherent summary", () => {
     const worked = [shift("2026-06-05"), shift("2026-06-12"), shift("2026-06-19")];
-    const c = calcVacation("2026-06-22", "2026-06-28", worked, { dayHours: 6 });
+    const c = calcVacation("2026-06-22", "2026-06-28", worked, { model: MODEL });
     expect(c.calendarDays).toBe(7);
     expect(c.werktage).toBe(6);
     expect(c.arbeitstage).toBe(5);
@@ -227,14 +231,12 @@ describe("calcVacation — payroll basis", () => {
   }
 
   it("reproduces the August payslip: 3–11 Aug = 6 days = 36 h", () => {
-    const calc = calcVacation("2026-08-03", "2026-08-11", history, { dayHours: 6 });
+    const calc = calcVacation("2026-08-03", "2026-08-11", history, { model: MODEL });
     expect(calc.weeklyHours).toBeCloseTo(28, 5);
-    // A full week (28 h) plus the trailing Mon (0 h) and Tue (7 h) = 35 h. Note the
-    // per-weekday weighting: a flat 28 x 9/7 would say 36. The extra Monday is free
-    // because he is never rostered then — which is the whole point of charging by
-    // hours rather than by calendar weekdays.
-    expect(calc.charge.missedHours).toBeCloseTo(35, 5);
-    expect(calc.charge.rawDays).toBeCloseTo(35 / 6, 5); // 5.83
+    // 7 eligible days away (both Mondays skipped) x 28/6 h = 32.67 h.
+    expect(calc.charge.eligibleDays).toBe(7);
+    expect(calc.charge.missedHours).toBeCloseTo(32.67, 2);
+    expect(calc.charge.rawDays).toBeCloseTo(5.44, 2);
     expect(calc.charge.days).toBe(6); // rounded up, as the manager does
     expect(calc.charge.paidHours).toBeCloseTo(36, 5); // 6 x 6 — the slip's Urlaub STD
     // The other basis is unchanged — same weeks, different unit.
@@ -244,7 +246,7 @@ describe("calcVacation — payroll basis", () => {
   });
 
   it("costs more days than shifts missed, because a 7 h shift > a 6 h vacation day", () => {
-    const calc = calcVacation("2026-08-03", "2026-08-09", history, { dayHours: 6 });
+    const calc = calcVacation("2026-08-03", "2026-08-09", history, { model: MODEL });
     expect(calc.scheduleCost.expected).toBeCloseTo(4, 5); // 4 shifts in the week
     expect(calc.charge.days).toBe(5); // but 28 h / 6 = 4.67 -> 5 days charged
   });
