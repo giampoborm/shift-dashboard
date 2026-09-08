@@ -75,6 +75,15 @@ export interface Payslip {
       ground truth reconciliation prefers over its own estimate for a past month. */
   vacationDays?: number;
   vacationHours?: number;
+  /** Set when PAYROLL got this month's vacation count wrong — e.g. the 8/2026 slip,
+   *  where the manager's own message counted 9 days away for an 8-day trip.
+   *
+   *  The figures stay authoritative for MONEY and for the entitlement balance: he
+   *  really was charged those days and really was paid for them. What changes is
+   *  that lib/vacationCharge stops checking its model against them — grading
+   *  yourself on a wrong answer key teaches you the wrong rule, and would leave a
+   *  warning up forever over something already settled. */
+  vacationDisputed?: boolean;
 }
 
 /** A recorded vacation period, with each basis' cost snapshotted at save time. */

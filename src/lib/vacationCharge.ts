@@ -396,6 +396,8 @@ export function payrollDaysTakenInYear(
 
 export interface MonthCheck {
   month: string;
+  /** True when the user marked this slip's own count as a payroll mistake. */
+  disputed: boolean;
   observedDays: number;
   observedHours: number;
   predictedDays: number;
@@ -408,10 +410,16 @@ export interface MonthCheck {
 
 export interface Calibration {
   checks: MonthCheck[];
-  /** Checks with a recorded vacation behind them — the ones that mean anything. */
+  /** Checks with a recorded vacation behind them AND not disputed — the ones that
+   *  mean anything. A slip the user says payroll got wrong is not evidence. */
   usable: number;
+  /** Slips excluded because the user marked them as payroll's mistake. */
+  disputed: number;
   /** True when the model reproduces every usable slip's day count. */
   matches: boolean;
+  /** Every month whose slip the model failed to reproduce, oldest first. A pattern
+   *  across several is what separates "payroll works differently" from a one-off. */
+  misses: MonthCheck[];
   /** Flat hours per vacation day the slips imply (hours ÷ days), if consistent. */
   dayHours: number | null;
   dayHoursConflict: boolean;
@@ -419,6 +427,24 @@ export interface Calibration {
   weeklyHours: number;
   /** Weekly hours the slips imply, averaged. Null when no slip can pin it down. */
   impliedWeeklyHours: number | null;
+  /**
+   * Weekly hours the ENTITLEMENT itself implies: its total hours ÷ its weeks
+   * (20 days x 6 h ÷ 4 weeks = 30). A contractual figure, owing nothing to what
+   * you actually worked.
+   */
+  entitlementWeeklyHours: number | null;
+  /**
+   * True when the payslips' implied hours land on that contractual figure rather
+   * than on your logged roster.
+   *
+   * This is the interesting case, and it is NOT an error in the log: it says
+   * payroll costs a vacation at a flat contract week, so a period where you
+   * actually worked less still gets charged the contract rate. One payslip cannot
+   * settle it — two agreeing would. Until then the app reports the disagreement
+   * and keeps estimating from the roster, because that is the only thing it can
+   * actually observe.
+   */
+  impliedIsContractual: boolean;
 }
 
 const HOURS_EPSILON = 0.01;
@@ -457,6 +483,7 @@ export function calibrateCharge(
   payslips: Payslip[],
   vacations: Vacation[],
   model: ChargeModel,
+  entitlement?: Pick<Settings, "vacationPayrollDays" | "vacationWerktage">,
 ): Calibration {
   const slips = payslips
     .filter((p) => p.vacationDays != null)
@@ -472,6 +499,7 @@ export function calibrateCharge(
       .reduce((n, s) => n + s.days, 0);
     return {
       month: p.month,
+      disputed: !!p.vacationDisputed,
       observedDays: p.vacationDays as number,
       observedHours,
       predictedDays,
@@ -490,35 +518,60 @@ export function calibrateCharge(
   const dayHoursConflict =
     perDay.length > 0 && perDay.some((h) => Math.abs(h - perDay[0]) > HOURS_EPSILON);
 
-  const usableChecks = checks.filter((c) => c.eligibleDays > 0);
+  // A disputed slip still tells us the hours-per-DAY ratio (36 ÷ 6 = 6 h holds
+  // however many days payroll thought he was away), so `perDay` above keeps it.
+  // It just can't be used to check the day COUNT or to back out weekly hours.
+  const usableChecks = checks.filter((c) => c.eligibleDays > 0 && !c.disputed);
   const implied = usableChecks
     .map((c) => c.impliedWeeklyHours)
     .filter((h): h is number => h != null);
+
+  const impliedWeeklyHours =
+    implied.length > 0 ? implied.reduce((a, b) => a + b, 0) / implied.length : null;
+
+  // The entitlement priced as a working year: its hours over its weeks.
+  const weeks = entitlement ? entitlement.vacationWerktage / 6 : 0;
+  const entitlementWeeklyHours =
+    entitlement && weeks > 0 ? (entitlement.vacationPayrollDays * model.dayHours) / weeks : null;
 
   return {
     checks,
     // Only a slip whose vacation we actually recorded can confirm anything: a
     // month with a vacation line but no saved range says nothing about the model.
     usable: usableChecks.length,
+    disputed: checks.filter((c) => c.disputed).length,
     matches: usableChecks.every((c) => c.predictedDays === c.observedDays),
+    misses: usableChecks.filter((c) => c.predictedDays !== c.observedDays),
     dayHours: perDay.length === 0 || dayHoursConflict ? null : perDay[0],
     dayHoursConflict,
     weeklyHours: model.weeklyHours,
-    impliedWeeklyHours:
-      implied.length > 0 ? implied.reduce((a, b) => a + b, 0) / implied.length : null,
+    impliedWeeklyHours,
+    entitlementWeeklyHours,
+    // Nearer the contract figure than the roster, and not a coincidence of the two
+    // being close anyway — hence both tests.
+    impliedIsContractual:
+      impliedWeeklyHours != null &&
+      entitlementWeeklyHours != null &&
+      Math.abs(impliedWeeklyHours - entitlementWeeklyHours) < 1.5 &&
+      Math.abs(impliedWeeklyHours - model.weeklyHours) > 1.5,
   };
 }
 
-/** Where the model stands, in words a person would use. */
+/**
+ * Where the model stands, in words a person would use.
+ *
+ * Deliberately does NOT blame the shift log. Either side can be off — the log, or
+ * payroll's own arithmetic — and with one payslip there is no way to tell. Saying
+ * "your hours are probably wrong" would be picking a side on no evidence.
+ */
 export function describeCalibration(cal: Calibration): string {
-  if (cal.usable === 0) return "Not checked against a payslip yet.";
-  const slips = cal.usable + " payslip" + (cal.usable === 1 ? "" : "s");
-  if (!cal.matches) {
-    const c = cal.checks.find((x) => x.eligibleDays > 0 && x.predictedDays !== x.observedDays);
-    return c
-      ? "Your " + c.month + " payslip charged " + c.observedDays + " days; this estimate says " +
-        c.predictedDays + " — your logged hours per week are probably off."
-      : "Doesn't match your " + slips + ".";
-  }
-  return "Matches " + slips + ".";
+  const aside =
+    cal.disputed > 0
+      ? ` (${cal.disputed} slip${cal.disputed === 1 ? "" : "s"} set aside as payroll's own error)`
+      : "";
+  if (cal.usable === 0) return `Not checked against a payslip yet${aside}.`;
+  if (cal.matches) return `Matches ${cal.usable} payslip${cal.usable === 1 ? "" : "s"}${aside}.`;
+  return cal.misses
+    .map((c) => `${c.month}: payroll charged ${c.observedDays} days, this estimate says ${c.predictedDays}`)
+    .join("; ");
 }

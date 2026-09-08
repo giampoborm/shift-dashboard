@@ -89,7 +89,14 @@ function GeneralSection(props: {
     { ...s, vacationEligibleWeekdays: eligible },
     buildRosterHours(props.allShifts, vacationCalendarDates(props.vacations)),
   );
-  const cal = calibrateCharge(props.payslips, props.vacations, model);
+  const cal = calibrateCharge(props.payslips, props.vacations, model, s);
+
+  /** "Payroll got this month wrong" — kept on the payslip, so it syncs and so the
+   *  figures themselves stay untouched (he really was charged and paid them). */
+  async function disputeMonth(month: string) {
+    const slip = props.payslips.find((p) => p.month === month);
+    if (slip?.id != null) await db.payslips.update(slip.id, { vacationDisputed: true });
+  }
 
   async function save() {
     setSaved(false);
@@ -185,6 +192,7 @@ function GeneralSection(props: {
         cal={cal}
         dayHours={s.vacationDayHours}
         onApplyDayHours={(hours) => setDayHours(String(hours))}
+        onDispute={disputeMonth}
       />
 
       <div className="row-actions" style={{ marginTop: "0.75rem" }}>
@@ -336,6 +344,7 @@ function PayslipRow(props: { slip: Payslip }) {
   const [net, setNet] = useState(String(props.slip.totalNet));
   const [vacDays, setVacDays] = useState(props.slip.vacationDays?.toString() ?? "");
   const [vacHours, setVacHours] = useState(props.slip.vacationHours?.toString() ?? "");
+  const [disputed, setDisputed] = useState(!!props.slip.vacationDisputed);
   const [errors, setErrors] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
 
@@ -354,6 +363,7 @@ function PayslipRow(props: { slip: Payslip }) {
       // Blank clears the figure back to "no vacation evidence" rather than to zero.
       vacationDays: parseNum(vacDays) ?? undefined,
       vacationHours: parseNum(vacHours) ?? undefined,
+      vacationDisputed: disputed || undefined,
     };
     const errs = validatePayslip(rec);
     setErrors(errs);
@@ -373,6 +383,17 @@ function PayslipRow(props: { slip: Payslip }) {
       <input value={net} onChange={(e) => { setNet(e.target.value); touched(); }} inputMode="decimal" />
       <input value={vacDays} onChange={(e) => { setVacDays(e.target.value); touched(); }} inputMode="decimal" placeholder="–" title={'Genommene Urlaubstage (Lohnart 620). Blank = this slip carries no vacation evidence.'} />
       <input value={vacHours} onChange={(e) => { setVacHours(e.target.value); touched(); }} inputMode="decimal" placeholder="–" title={'Urlaub hours (Lohnart 171).'} />
+      <label
+        className="checkbox-row dispute"
+        title="Payroll's own vacation count is wrong for this month. The days and pay stay as shown — you were charged them — but the app stops checking its estimate against them."
+      >
+        <input
+          type="checkbox"
+          checked={disputed}
+          onChange={(e) => { setDisputed(e.target.checked); touched(); }}
+        />
+        wrong
+      </label>
       <span className="muted unit">{factor != null ? `${(factor * 100).toFixed(1)}%` : "—"}</span>
       <button onClick={save}>Save</button>
       <button className="danger" onClick={remove}>Delete</button>

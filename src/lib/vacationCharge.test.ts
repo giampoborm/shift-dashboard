@@ -263,7 +263,48 @@ describe("calibrateCharge", () => {
     const thin = { ...MODEL, weeklyHours: 14 }; // half the hours -> 3 days
     const cal = calibrateCharge([slip({ vacationDays: 6, vacationHours: 36 })], [august], thin);
     expect(cal.matches).toBe(false);
-    expect(describeCalibration(cal)).toMatch(/charged 6 days/);
+    expect(cal.misses.map((c) => c.month)).toEqual(["2026-08"]);
+    expect(describeCalibration(cal)).toMatch(/payroll charged 6 days/);
+  });
+
+  it("blames neither side — one payslip can't say which is off", () => {
+    const thin = { ...MODEL, weeklyHours: 14 };
+    const cal = calibrateCharge([slip({ vacationDays: 6, vacationHours: 36 })], [august], thin);
+    expect(describeCalibration(cal)).not.toMatch(/log|your hours|probably/i);
+  });
+
+  it("spots payroll pricing a vacation at the CONTRACT week, not the real one", () => {
+    // 20 payroll days x 6 h ÷ (24 Werktage / 6 = 4 weeks) = 30 h/week — a figure
+    // that owes nothing to what he actually worked. The August slip's 36 h over 7
+    // eligible days implies 30.9, which lands on it; his log says 25.5.
+    const ENT = { vacationPayrollDays: 20, vacationWerktage: 24 };
+    const logged = { ...MODEL, weeklyHours: 25.5 };
+    const cal = calibrateCharge(
+      [slip({ vacationDays: 6, vacationHours: 36 })],
+      [august],
+      logged,
+      ENT,
+    );
+    expect(cal.entitlementWeeklyHours).toBeCloseTo(30, 5);
+    expect(cal.impliedWeeklyHours).toBeCloseTo((36 * 6) / 7, 5); // 30.86
+    expect(cal.impliedIsContractual).toBe(true);
+  });
+
+  it("doesn't cry 'contractual' when the roster already explains the slip", () => {
+    const ENT = { vacationPayrollDays: 20, vacationWerktage: 24 };
+    const cal = calibrateCharge(
+      [slip({ vacationDays: 6, vacationHours: 36 })],
+      [august],
+      { ...MODEL, weeklyHours: 30.5 }, // log and contract agree — nothing to explain
+      ENT,
+    );
+    expect(cal.impliedIsContractual).toBe(false);
+  });
+
+  it("has no contract figure to compare against when none is supplied", () => {
+    const cal = calibrateCharge([slip({ vacationDays: 6, vacationHours: 36 })], [august], MODEL);
+    expect(cal.entitlementWeeklyHours).toBeNull();
+    expect(cal.impliedIsContractual).toBe(false);
   });
 
   it("says nothing about a slip whose vacation was never recorded", () => {
@@ -271,6 +312,32 @@ describe("calibrateCharge", () => {
     expect(cal.usable).toBe(0);
     expect(cal.matches).toBe(true); // no evidence is not counter-evidence
     expect(describeCalibration(cal)).toMatch(/Not checked/);
+  });
+
+  it("stops grading itself against a slip payroll got wrong", () => {
+    // 8/2026: the manager's own message counted 9 days away for an 8-day trip, so
+    // his 6 is the wrong answer key. Marking it must silence the check WITHOUT
+    // touching the figures — he was still charged 6 days and paid for 36 h.
+    const wrong = slip({ vacationDays: 6, vacationHours: 36, vacationDisputed: true });
+    const cal = calibrateCharge([wrong], [august], { ...MODEL, weeklyHours: 25.5 });
+    expect(cal.disputed).toBe(1);
+    expect(cal.usable).toBe(0);
+    expect(cal.misses).toEqual([]);
+    expect(cal.matches).toBe(true);
+    expect(describeCalibration(cal)).toMatch(/set aside as payroll's own error/);
+    // The hours-per-day ratio survives: 36 ÷ 6 = 6 h holds however many days
+    // payroll thought he was away.
+    expect(cal.dayHours).toBe(6);
+  });
+
+  it("keeps checking the slips that aren't disputed", () => {
+    const wrong = slip({ vacationDays: 6, vacationHours: 36, vacationDisputed: true });
+    const ok = slip({ month: "2026-09", vacationDays: 5, vacationHours: 30 });
+    const september = vacation("2026-09-01", "2026-09-07", { id: 2 });
+    const cal = calibrateCharge([wrong, ok], [august, september], MODEL);
+    expect(cal.disputed).toBe(1);
+    expect(cal.usable).toBe(1);
+    expect(cal.matches).toBe(true); // Sept: 6 eligible x 4.67 = 28 h -> 5 days
   });
 
   it("notices payslips that disagree about the flat day length", () => {

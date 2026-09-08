@@ -101,8 +101,8 @@ export function VacationPlanner(props: {
   // Does the model reproduce the day counts the payslips actually charged — and if
   // not, what weekly hours would have? See calibrateCharge.
   const cal = useMemo(
-    () => calibrateCharge(payslips, vacations, model),
-    [payslips, vacations, model],
+    () => calibrateCharge(payslips, vacations, model, settings),
+    [payslips, vacations, model, settings],
   );
 
   const year = new Date().getFullYear();
@@ -248,7 +248,14 @@ export function VacationPlanner(props: {
             Widening the eligible days in Settings doesn't make a holiday cost more; it only
             changes how a part-week at either end is counted.
           </p>
-          <CalibrationWarning cal={cal} dayHours={dayHours} />
+          <CalibrationWarning
+            cal={cal}
+            dayHours={dayHours}
+            onDispute={async (month) => {
+              const slip = payslips.find((p) => p.month === month);
+              if (slip?.id != null) await db.payslips.update(slip.id, { vacationDisputed: true });
+            }}
+          />
 
           {budget.unpaid > 0 && (
             <p className="err" style={{ fontSize: "0.82rem" }}>

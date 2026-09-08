@@ -257,5 +257,39 @@ contains one to check against.
 Still removed at the user's request: the **"tips forgone"** card. Scope stays a
 **calculator + logger**, not an optimizer.
 
+### ✅ Closed: the 8/2026 vacation slip is payroll's error (2026-09-08)
+
+The app's calibration flagged that its estimate (5 days) disagreed with the slip
+(6 days). It first suggested payroll might price vacation at the flat **contract
+week** — the slip implies ~30.9 h/week, almost exactly the entitlement's own
+arithmetic (20 days × 6 h ÷ 4 weeks = 30.0), while the log averages 25.5.
+
+**The user settled it with better evidence:** his manager's own message counts him
+away **9 days for an 8-day trip**. A one-off miscount, not a policy. He's accepted
+the loss and will check the dates when booking in future.
+
+So the app needed a way to say "this slip is the wrong one" — otherwise it grades
+itself forever against a bad answer key and the warning never goes away:
+
+- **`Payslip.vacationDisputed`.** The figures stay fully authoritative for money and
+  for the entitlement balance (he *was* charged and paid them); only the model check
+  skips the slip. The hours-per-day ratio (36 ÷ 6 = 6 h) is still taken from it,
+  since that holds however many days payroll thought he was away.
+- Set it from the warning itself (**"Payroll miscounted"**) or the payslip row's
+  **wrong** checkbox. Stored on the payslip, so it syncs across devices.
+- `describeCalibration` reports how many slips are set aside, so a disputed slip is
+  visibly excluded rather than silently ignored.
+
+**Kept, not acted on:** `Calibration.impliedIsContractual` still detects slips
+landing on the contract week rather than the roster. Wrong for August, but it would
+be the right read if *several* slips did it — at which point the fix is a
+weekly-hours source setting (contract vs logged average), offered and declined on
+2026-09-07 for want of exactly that evidence.
+
+**UI rule this produced:** the calibration box renders **nothing** when the estimate
+agrees with the payslips ("when it works fine no flag please"). When it disagrees:
+two short lines, a ✕, and the dismissal keyed to the specific discrepancy so a new
+payslip re-raises it by itself. Never an always-on status badge.
+
 **Not settled:** vacation entitlement counting basis with the employer — see
 [[vacation-entitlement]].

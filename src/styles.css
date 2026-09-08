@@ -798,6 +798,15 @@ button.linklike:hover { background: none; color: var(--text); }
   cursor: pointer;
 }
 .rule-fit-close:hover { color: var(--text); background: none; }
+.rule-fit-miss {
+  display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline;
+}
+.rule-fit-miss button { font-size: 0.72rem; padding: 0.1rem 0.4rem; }
+.settings .editrow .checkbox-row.dispute {
+  flex: 0 0 auto; flex-direction: row; align-items: center; gap: 0.25rem;
+  font-size: 0.74rem; color: var(--muted);
+}
+.settings .editrow .checkbox-row.dispute input { flex: 0 0 auto; min-width: 0; width: auto; }
 
 /* Stale-counting-rule warning inside the payslip-check popup. */
 .recon-note.warn {
