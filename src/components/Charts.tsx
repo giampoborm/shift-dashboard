@@ -21,19 +21,22 @@ import {
 import { byMonth, byType, takeHomeComposition, type VacationPayContext } from "../lib/charts";
 import type { GrossRate, Payslip, Settings, Shift, ShiftType } from "../lib/types";
 
-const ACCENT = "#38bdf8"; // net wage
-const GOOD = "#4ade80"; // usable tips / tips-per-hour
-const VACATION = "#a78bfa"; // paid vacation — wage-like, but visibly not worked
-const GRID = "#334155";
-const MUTED = "#94a3b8";
+// Mirrors the tokens in styles.css — Recharts wants literal colours, not
+// var(). Wage is black and tips are green, exactly as the Home rank bars.
+const ACCENT = "#0a0a0a"; // net wage
+const GOOD = "#17803d"; // usable tips / tips-per-hour
+const VACATION = "#6b2fbf"; // paid vacation — wage-like, but visibly not worked
+const GRID = "#e6e6e6";
+const MUTED = "#8a8a8e";
 
+/* The sun arc: yellow morning → red midday → blue night. */
 const TYPE_COLOR: Record<ShiftType, string> = {
-  opening: "#7dd3fc",
-  "late-morning": "#38bdf8",
-  "mid-day": "#fcd34d",
-  "early-closing": "#fb923c",
-  closing: "#c4b5fd",
-  meeting: "#94a3b8",
+  opening: "#f5c518",
+  "late-morning": "#e36414",
+  "mid-day": "#d62518",
+  "early-closing": "#6b2fbf",
+  closing: "#1b4fd8",
+  meeting: "#8a8a8e",
 };
 
 const SLICE_COLOR: Record<string, string> = {
@@ -47,15 +50,15 @@ const eur0 = (n: number) => `€${Math.round(n)}`;
 
 const axis = { stroke: MUTED, fontSize: 12 };
 const tooltipStyle = {
-  background: "#0f172a",
+  background: "#fff",
   border: `1px solid ${GRID}`,
   borderRadius: 8,
-  color: "#e2e8f0",
+  color: "#0a0a0a",
   fontSize: 12,
 };
-// Pie slice colours live on <Cell>, so the tooltip item's own colour resolves to
-// undefined and the text renders near-black (invisible on the dark panel). Force it.
-const tooltipItemStyle = { color: "#e2e8f0" };
+// Pie slice colours live on <Cell>, so the tooltip item's own colour resolves
+// to undefined; pin it to the body text colour.
+const tooltipItemStyle = { color: "#0a0a0a" };
 
 export function Charts(props: {
   /** PAID shifts in range (worked + sick) — the month aggregations need both; the
@@ -165,7 +168,7 @@ export function Charts(props: {
                 `${e.name} ${Math.round((e.percent ?? 0) * 100)}%`
               }
               labelLine={false}
-              stroke="#0f172a"
+              stroke="#fff"
             >
               {composition.map((slice) => (
                 <Cell key={slice.name} fill={SLICE_COLOR[slice.name] ?? ACCENT} />

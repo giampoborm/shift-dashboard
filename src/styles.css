@@ -18,8 +18,12 @@
 }
 
 :root {
-  /* White / minimal / bold. Interaction colour is black; red is reserved for the
-     log action (and over-budget). Shift-type colours are kept as darker-on-white. */
+  /* White / minimal / bold. Interaction colour is black.
+     Hue palette = three primaries plus their mixes, and nothing else:
+       red + blue = purple,  blue + yellow = green,  yellow + red = orange.
+     Yellow and orange are FILL colours — at 1.4:1 and 3.3:1 on white they are
+     unreadable as text or as a hairline border, so each has an -ink form that
+     is used wherever the colour has to carry a glyph or a 1px stroke. */
   --bg: #ffffff;
   --panel: #ffffff;
   --panel-2: #f4f4f5;
@@ -27,10 +31,21 @@
   --text: #0a0a0a;
   --muted: #8a8a8e;
   --accent: #0a0a0a;
-  --red: #ff2419;
-  --good: #0a0a0a;
-  --warn: #b45309;
-  --bad: #dc2626;
+
+  --red: #d62518;
+  --blue: #1b4fd8;
+  --yellow: #f5c518;
+  --purple: #6b2fbf;   /* red + blue */
+  --green: #17803d;    /* blue + yellow — reserved for money/positive */
+  --orange: #e36414;   /* yellow + red */
+  --yellow-ink: #9a6700;
+  --orange-ink: #b84a00;
+
+  /* Semantic. --red is now identity (it is a third of the brand), so failure
+     gets its own darker red and leans on weight/flags to shout, not on hue. */
+  --good: var(--green);
+  --warn: var(--orange-ink);
+  --bad: #b01008;
   font-family: "Helvetica Rounded", "Helvetica Neue", Helvetica, Arial, system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
@@ -427,7 +442,7 @@ button:disabled:hover { background: var(--panel-2); }
 .recon-grid .k { font-weight: 700; }
 .recon-grid .num { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
 .recon-grid .delta { text-align: right; font-weight: 800; font-variant-numeric: tabular-nums; }
-.recon-grid .delta.off { color: var(--red); }
+.recon-grid .delta.off { color: var(--bad); }
 .recon-note { color: var(--muted); font-size: 0.78rem; line-height: 1.45; margin: 0 0 0.9rem; }
 .recon-note strong { color: var(--text); }
 .recon-actions { display: flex; gap: 0.4rem; justify-content: flex-end; flex-wrap: wrap; }
@@ -437,7 +452,7 @@ button:disabled:hover { background: var(--panel-2); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .warnings {
-  background: #fff7ed;
+  background: color-mix(in srgb, var(--orange) 8%, #fff);
   border: 1.5px solid var(--warn);
   border-radius: 10px;
   padding: 0.75rem 0.9rem;
@@ -460,15 +475,18 @@ tbody tr { border-bottom: 1px solid var(--border); }
 tbody tr:hover { background: var(--panel-2); }
 
 .tag { font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 5px; background: var(--panel-2); color: var(--muted); font-weight: 600; }
-.tag.opening { color: #0369a1; }
-.tag.late-morning { color: #0284c7; }
-.tag.mid-day { color: #b45309; }
-.tag.early-closing { color: #c2410c; }
-.tag.closing { color: #6d28d9; }
-.tag.meeting { color: #64748b; }
-.tag.planned { color: #b45309; }
-.tag.worked { color: #15803d; }
-.tag.sick { color: #b45309; }
+/* Hue = time of day (a sun arc: yellow morning → red midday → blue night), so
+   the colour itself is readable without the label. Status is never a hue — it
+   is carried by form (filled / outline / struck / dashed). */
+.tag.opening { color: var(--yellow-ink); }
+.tag.late-morning { color: var(--orange-ink); }
+.tag.mid-day { color: var(--red); }
+.tag.early-closing { color: var(--purple); }
+.tag.closing { color: var(--blue); }
+.tag.meeting { color: var(--muted); }
+.tag.planned { color: var(--muted); }
+.tag.worked { color: var(--green); }
+.tag.sick { color: var(--orange-ink); }
 .pos { color: var(--text); font-weight: 700; }
 .muted { color: var(--muted); }
 
@@ -576,7 +594,9 @@ button.danger:hover { background: var(--bad); color: #fff; }
 .cal-total { font-size: 0.74rem; font-weight: 800; color: var(--text); text-align: right; margin-top: 2px; }
 .cal-tip { font-size: 0.66rem; color: var(--muted); text-align: right; }
 .cal-chip {
-  --chip: var(--muted);
+  --chip: var(--muted);         /* ink: text + border on an outline chip */
+  --chip-fill: var(--chip);     /* background on a filled (worked) chip */
+  --chip-on: #fff;              /* text on that fill */
   display: block;
   width: 100%;
   text-align: left;
@@ -592,24 +612,24 @@ button.danger:hover { background: var(--bad); color: #fff; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.cal-chip.opening { --chip: #0369a1; }
-.cal-chip.late-morning { --chip: #0284c7; }
-.cal-chip.mid-day { --chip: #b45309; }
-.cal-chip.early-closing { --chip: #c2410c; }
-.cal-chip.closing { --chip: #6d28d9; }
-.cal-chip.meeting { --chip: #64748b; }
+.cal-chip.opening { --chip: var(--yellow-ink); --chip-fill: var(--yellow); --chip-on: #0a0a0a; }
+.cal-chip.late-morning { --chip: var(--orange-ink); --chip-fill: var(--orange); }
+.cal-chip.mid-day { --chip: var(--red); }
+.cal-chip.early-closing { --chip: var(--purple); }
+.cal-chip.closing { --chip: var(--blue); }
+.cal-chip.meeting { --chip: var(--muted); }
 /* worked = filled chip (type colour bg, white text); planned = outline */
-.cal-chip.st-worked { background: var(--chip); color: #fff; border-color: transparent; font-weight: 700; }
+.cal-chip.st-worked { background: var(--chip-fill); color: var(--chip-on); border-color: transparent; font-weight: 700; }
 .cal-chip.st-swapped-out, .cal-chip.st-swapped-in { opacity: 0.5; text-decoration: line-through; }
 /* sick = rostered but not stood: paid, so it still reads as "settled" (dashed, amber) */
-.cal-chip.st-sick { border-style: dashed; border-color: #b45309; color: #b45309; font-style: italic; }
+.cal-chip.st-sick { border-style: dashed; border-color: var(--orange-ink); color: var(--orange-ink); font-style: italic; }
 
-.cal-cell.vacation { background: #ecfdf5; }
-.cal-cell.vacation:hover { background: #d8f5e8; }
+.cal-cell.vacation { background: color-mix(in srgb, var(--green) 8%, #fff); }
+.cal-cell.vacation:hover { background: color-mix(in srgb, var(--green) 16%, #fff); }
 .cal-vacation {
   font-size: 0.62rem;
   font-weight: 700;
-  color: #15803d;
+  color: var(--green);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -750,12 +770,12 @@ button.linklike:hover { background: none; color: var(--text); }
 }
 .rank-bar .seg { display: block; height: 100%; }
 .rank-bar .seg.wage { background: var(--text); }
-.rank-bar .seg.tips { background: #16a34a; }
+.rank-bar .seg.tips { background: var(--green); }
 .rank-foot { font-size: 0.72rem; }
 .rank-legend { display: flex; gap: 1rem; font-size: 0.72rem; margin-top: 0.1rem; }
 .rank-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
 .rank-legend .dot.wage { background: var(--text); }
-.rank-legend .dot.tips { background: #16a34a; }
+.rank-legend .dot.tips { background: var(--green); }
 
 /* 6 — tip drift watch */
 .drift { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.3rem; }
@@ -764,7 +784,7 @@ button.linklike:hover { background: none; color: var(--text); }
 .drift-nums { font-size: 0.76rem; }
 .drift-delta { font-weight: 800; font-size: 0.86rem; color: var(--muted); text-align: right; min-width: 3.2rem; }
 .drift-delta.down { color: var(--bad); }
-.drift-delta.up { color: #16a34a; }
+.drift-delta.up { color: var(--green); }
 .drift-note { font-size: 0.68rem; font-weight: 600; color: var(--muted); text-align: right; min-width: 3.2rem; }
 
 /* The vacation model's self-check. Unscoped: it appears in Settings AND in the
