@@ -22,14 +22,18 @@ import { byMonth, byType, takeHomeComposition, type VacationPayContext } from ".
 import type { GrossRate, Payslip, Settings, Shift, ShiftType } from "../lib/types";
 
 // Mirrors the tokens in styles.css — Recharts wants literal colours, not
-// var(). Wage is black and tips are green, exactly as the Home rank bars.
-const ACCENT = "#0a0a0a"; // net wage
-const GOOD = "#17803d"; // usable tips / tips-per-hour
-const VACATION = "#6b2fbf"; // paid vacation — wage-like, but visibly not worked
+// var(). The three money series are the three primaries, matching the Home
+// rank bars: blue wage, yellow tips. Grey is structure, never a series.
+const ACCENT = "#1b4fd8"; // net wage — the contractual, the steady
+const GOOD = "#f5c518"; // usable tips — the variable upside
+// Yellow is a fill, not a stroke (1.4:1 on white). Lines and dots take the ink.
+const GOOD_INK = "#9a6700";
+const VACATION = "#d62518"; // paid vacation — wage-like, but visibly not worked
 const GRID = "#e6e6e6";
 const MUTED = "#8a8a8e";
 
-/* The sun arc: yellow morning → red midday → blue night. */
+/* Six shift types is the one place three hues cannot cover, so the mixes come
+   off the shelf here — as a sun arc: yellow morning → red midday → blue night. */
 const TYPE_COLOR: Record<ShiftType, string> = {
   opening: "#f5c518",
   "late-morning": "#e36414",
@@ -125,9 +129,9 @@ export function Charts(props: {
               type="monotone"
               dataKey="tipsPerHour"
               name="Tips/h"
-              stroke={GOOD}
+              stroke={GOOD_INK}
               strokeWidth={2}
-              dot={{ r: 3, fill: GOOD }}
+              dot={{ r: 3, fill: GOOD, stroke: GOOD_INK }}
               connectNulls
             />
           </LineChart>

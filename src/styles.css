@@ -19,11 +19,16 @@
 
 :root {
   /* White / minimal / bold. Interaction colour is black.
-     Hue palette = three primaries plus their mixes, and nothing else:
-       red + blue = purple,  blue + yellow = green,  yellow + red = orange.
-     Yellow and orange are FILL colours — at 1.4:1 and 3.3:1 on white they are
-     unreadable as text or as a hairline border, so each has an -ink form that
-     is used wherever the colour has to carry a glyph or a 1px stroke. */
+     The palette is RED, BLUE and YELLOW. Every meaning the app needs is
+     assigned out of those three first — money, status, deltas, warnings.
+     Their mixes (purple = red+blue, orange = yellow+red) are an OVERFLOW
+     shelf: they appear only where three hues provably cannot cover the set,
+     which today is the six shift types and nothing else. Do not reach for a
+     secondary because it looks nicer; reach for it when you have run out.
+     Black and grey are chrome — interaction, text, structure — never data.
+     Yellow and orange are FILL colours: at 1.4:1 and 3.3:1 on white they are
+     unreadable as text or as a hairline border, so each has an -ink form for
+     wherever the colour has to carry a glyph or a 1px stroke. */
   --bg: #ffffff;
   --panel: #ffffff;
   --panel-2: #f4f4f5;
@@ -35,16 +40,20 @@
   --red: #d62518;
   --blue: #1b4fd8;
   --yellow: #f5c518;
+  /* Overflow shelf — shift types only. */
   --purple: #6b2fbf;   /* red + blue */
-  --green: #17803d;    /* blue + yellow — reserved for money/positive */
   --orange: #e36414;   /* yellow + red */
   --yellow-ink: #9a6700;
   --orange-ink: #b84a00;
 
-  /* Semantic. --red is now identity (it is a third of the brand), so failure
-     gets its own darker red and leans on weight/flags to shout, not on hue. */
-  --good: var(--green);
-  --warn: var(--orange-ink);
+  /* Semantic, all three primary:
+       blue   = the contractual, the steady — wage, worked, confirmed, positive
+       yellow = the variable upside — tips, and time off
+       red    = the negative — shortfall, over budget, error
+     --bad is a darker red only so it can carry small text; same hue, same
+     meaning family as --red. */
+  --good: var(--blue);
+  --warn: var(--yellow-ink);
   --bad: #b01008;
   font-family: "Helvetica Rounded", "Helvetica Neue", Helvetica, Arial, system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -452,8 +461,8 @@ button:disabled:hover { background: var(--panel-2); }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .warnings {
-  background: color-mix(in srgb, var(--orange) 8%, #fff);
-  border: 1.5px solid var(--warn);
+  background: color-mix(in srgb, var(--yellow) 16%, #fff);
+  border: 1.5px solid var(--yellow);
   border-radius: 10px;
   padding: 0.75rem 0.9rem;
   margin-bottom: 1.5rem;
@@ -485,7 +494,7 @@ tbody tr:hover { background: var(--panel-2); }
 .tag.closing { color: var(--blue); }
 .tag.meeting { color: var(--muted); }
 .tag.planned { color: var(--muted); }
-.tag.worked { color: var(--green); }
+.tag.worked { color: var(--blue); }
 .tag.sick { color: var(--orange-ink); }
 .pos { color: var(--text); font-weight: 700; }
 .muted { color: var(--muted); }
@@ -624,12 +633,12 @@ button.danger:hover { background: var(--bad); color: #fff; }
 /* sick = rostered but not stood: paid, so it still reads as "settled" (dashed, amber) */
 .cal-chip.st-sick { border-style: dashed; border-color: var(--orange-ink); color: var(--orange-ink); font-style: italic; }
 
-.cal-cell.vacation { background: color-mix(in srgb, var(--green) 8%, #fff); }
-.cal-cell.vacation:hover { background: color-mix(in srgb, var(--green) 16%, #fff); }
+.cal-cell.vacation { background: color-mix(in srgb, var(--yellow) 18%, #fff); }
+.cal-cell.vacation:hover { background: color-mix(in srgb, var(--yellow) 32%, #fff); }
 .cal-vacation {
   font-size: 0.62rem;
   font-weight: 700;
-  color: var(--green);
+  color: var(--yellow-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -769,13 +778,13 @@ button.linklike:hover { background: none; color: var(--text); }
   background: var(--panel-2);
 }
 .rank-bar .seg { display: block; height: 100%; }
-.rank-bar .seg.wage { background: var(--text); }
-.rank-bar .seg.tips { background: var(--green); }
+.rank-bar .seg.wage { background: var(--blue); }
+.rank-bar .seg.tips { background: var(--yellow); }
 .rank-foot { font-size: 0.72rem; }
 .rank-legend { display: flex; gap: 1rem; font-size: 0.72rem; margin-top: 0.1rem; }
 .rank-legend .dot { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 4px; vertical-align: middle; }
-.rank-legend .dot.wage { background: var(--text); }
-.rank-legend .dot.tips { background: var(--green); }
+.rank-legend .dot.wage { background: var(--blue); }
+.rank-legend .dot.tips { background: var(--yellow); }
 
 /* 6 — tip drift watch */
 .drift { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.3rem; }
@@ -784,7 +793,7 @@ button.linklike:hover { background: none; color: var(--text); }
 .drift-nums { font-size: 0.76rem; }
 .drift-delta { font-weight: 800; font-size: 0.86rem; color: var(--muted); text-align: right; min-width: 3.2rem; }
 .drift-delta.down { color: var(--bad); }
-.drift-delta.up { color: var(--green); }
+.drift-delta.up { color: var(--blue); }
 .drift-note { font-size: 0.68rem; font-weight: 600; color: var(--muted); text-align: right; min-width: 3.2rem; }
 
 /* The vacation model's self-check. Unscoped: it appears in Settings AND in the
