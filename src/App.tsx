@@ -273,6 +273,7 @@ export function App() {
         <Analysis
           allShifts={allShifts!}
           worked={workedHistory}
+          vacations={vacations ?? []}
           settings={settings!}
           rates={rates!}
           payslips={payslips!}
@@ -646,13 +647,16 @@ const RANGES = [3, 6, 12] as const;
 function Analysis(props: {
   allShifts: Shift[];
   worked: Shift[];
+  /** Charts count paid vacation: it produces no shift rows, so without it a month
+   *  off reads as a month unpaid. */
+  vacations: Vacation[];
   settings: Settings;
   rates: GrossRate[];
   payslips: Payslip[];
   stations: string[];
   onEditShift: (s: Shift) => void;
 }) {
-  const { allShifts, worked, settings, rates, payslips, stations, onEditShift } = props;
+  const { allShifts, worked, vacations, settings, rates, payslips, stations, onEditShift } = props;
   const [rangeMonths, setRangeMonths] = useState<number | "all">(6);
   const [filters, setFilters] = useState<ColumnFilters>(EMPTY_FILTERS);
 
@@ -678,7 +682,44 @@ function Analysis(props: {
     });
   }, [allShifts, fromDate, filters]);
 
-  const workedInRange = useMemo(() => inRange.filter((s) => s.status === "worked"), [inRange]);
+  // PAID shifts: the month totals owe him a sick day's wage too (Entgeltfortzahlung).
+  // lib/charts re-filters to strictly worked for the per-shift lenses.
+  const paidInRange = useMemo(() => inRange.filter(isPaidShift), [inRange]);
+
+  // The same charge model Home prices vacation with — built off the full roster,
+  // not the filtered range, because a typical week is a property of the roster.
+  //
+  // Undefined while a NON-DATE filter is active. The FilterBar selects SHIFTS by
+  // type/station/weekday/text, and a vacation is not a shift — it has none of
+  // those attributes, so it can't match. Merging the whole month's vacation pay
+  // into a chart of "closing shifts only" would put an unfiltered figure next to a
+  // filtered one; leaving it out keeps the view internally consistent. Date
+  // filters are different: they narrow the WINDOW, so they're passed through as
+  // bounds instead.
+  const vacationCtx = useMemo(() => {
+    const narrowed =
+      filters.type !== "all" ||
+      filters.station !== "all" ||
+      filters.weekday !== "all" ||
+      filters.q.trim() !== "";
+    if (narrowed) return undefined;
+    const model = chargeModel(
+      settings,
+      buildRosterHours(allShifts, vacationCalendarDates(vacations)),
+    );
+    // Latest floor wins, so the range tabs and a manual "from" compose. No `to`
+    // beyond a manual one: this is a history chart, and vacation still to come
+    // belongs on Home's projection, not here.
+    const floor = [fromDate, filters.from].filter(Boolean).sort().pop();
+    return {
+      vacations,
+      model,
+      settings,
+      todayIso: format(new Date(), "yyyy-MM-dd"),
+      from: floor ? floor.slice(0, 7) : undefined,
+      to: (filters.to || format(new Date(), "yyyy-MM-dd")).slice(0, 7),
+    };
+  }, [allShifts, vacations, settings, fromDate, filters]);
 
   function exportCsv() {
     const csv = shiftsToCsv(inRange, rates, payslips, settings);
@@ -708,7 +749,13 @@ function Analysis(props: {
 
       {/* Altitude 1 — graphs (the patterns / insight). */}
       <Suspense fallback={<div className="empty">Loading charts…</div>}>
-        <Charts worked={workedInRange} rates={rates} payslips={payslips} settings={settings} />
+        <Charts
+          shifts={paidInRange}
+          rates={rates}
+          payslips={payslips}
+          settings={settings}
+          vacation={vacationCtx}
+        />
       </Suspense>
 
       {/* Altitude 2 — the substrate: the underlying rows, filterable. */}

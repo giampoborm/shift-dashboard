@@ -18,11 +18,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { byMonth, byType, takeHomeComposition } from "../lib/charts";
+import { byMonth, byType, takeHomeComposition, type VacationPayContext } from "../lib/charts";
 import type { GrossRate, Payslip, Settings, Shift, ShiftType } from "../lib/types";
 
 const ACCENT = "#38bdf8"; // net wage
 const GOOD = "#4ade80"; // usable tips / tips-per-hour
+const VACATION = "#a78bfa"; // paid vacation — wage-like, but visibly not worked
 const GRID = "#334155";
 const MUTED = "#94a3b8";
 
@@ -33,6 +34,12 @@ const TYPE_COLOR: Record<ShiftType, string> = {
   "early-closing": "#fb923c",
   closing: "#c4b5fd",
   meeting: "#94a3b8",
+};
+
+const SLICE_COLOR: Record<string, string> = {
+  "Net wage": ACCENT,
+  "Vacation pay": VACATION,
+  "Usable tips": GOOD,
 };
 
 const eur = (n: number) => `€${n.toFixed(2)}`;
@@ -51,33 +58,37 @@ const tooltipStyle = {
 const tooltipItemStyle = { color: "#e2e8f0" };
 
 export function Charts(props: {
-  worked: Shift[];
+  /** PAID shifts in range (worked + sick) — the month aggregations need both; the
+   *  per-shift lenses re-filter to strictly worked themselves. */
+  shifts: Shift[];
   rates: GrossRate[];
   payslips: Payslip[];
   settings: Settings;
+  /** Paid vacation, so a month off doesn't read as a month unpaid. */
+  vacation?: VacationPayContext;
 }) {
-  const { worked, rates, payslips, settings } = props;
+  const { shifts, rates, payslips, settings, vacation } = props;
 
   const months = useMemo(
-    () => byMonth(worked, rates, payslips, settings),
-    [worked, rates, payslips, settings],
+    () => byMonth(shifts, rates, payslips, settings, vacation),
+    [shifts, rates, payslips, settings, vacation],
   );
   const types = useMemo(
-    () => byType(worked, rates, payslips, settings),
-    [worked, rates, payslips, settings],
+    () => byType(shifts, rates, payslips, settings),
+    [shifts, rates, payslips, settings],
   );
   const composition = useMemo(
-    () => takeHomeComposition(worked, rates, payslips, settings),
-    [worked, rates, payslips, settings],
+    () => takeHomeComposition(shifts, rates, payslips, settings, vacation),
+    [shifts, rates, payslips, settings, vacation],
   );
 
-  if (!worked.length) {
+  if (!months.length) {
     return <div className="empty">No worked shifts yet — import history.csv to see charts.</div>;
   }
 
   return (
     <div className="charts">
-      <ChartPanel title="Take-home by month" sub="net wage + usable tips, stacked">
+      <ChartPanel title="Take-home by month" sub="net wage + paid vacation + usable tips, stacked">
         <ResponsiveContainer width="100%" height={260}>
           <BarChart data={months} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
@@ -90,12 +101,13 @@ export function Charts(props: {
             />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             <Bar dataKey="netWage" name="Net wage" stackId="a" fill={ACCENT} radius={[0, 0, 0, 0]} />
+            <Bar dataKey="vacationPay" name="Vacation pay" stackId="a" fill={VACATION} radius={[0, 0, 0, 0]} />
             <Bar dataKey="usableTips" name="Usable tips" stackId="a" fill={GOOD} radius={[3, 3, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </ChartPanel>
 
-      <ChartPanel title="Tips per hour over time" sub="reported tips ÷ hours, per month">
+      <ChartPanel title="Tips per hour over time" sub="reported tips ÷ hours worked, per month">
         <ResponsiveContainer width="100%" height={260}>
           <LineChart data={months} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
@@ -139,7 +151,7 @@ export function Charts(props: {
         </ResponsiveContainer>
       </ChartPanel>
 
-      <ChartPanel title="Take-home composition" sub="wage vs tips, all worked shifts">
+      <ChartPanel title="Take-home composition" sub="where the money comes from">
         <ResponsiveContainer width="100%" height={260}>
           <PieChart>
             <Pie
@@ -155,8 +167,8 @@ export function Charts(props: {
               labelLine={false}
               stroke="#0f172a"
             >
-              {composition.map((s) => (
-                <Cell key={s.name} fill={s.name === "Usable tips" ? GOOD : ACCENT} />
+              {composition.map((slice) => (
+                <Cell key={slice.name} fill={SLICE_COLOR[slice.name] ?? ACCENT} />
               ))}
             </Pie>
             <Tooltip
